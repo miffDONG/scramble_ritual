@@ -1,0 +1,7 @@
+opencv-python
+numpy
+python-osc
+pyserial
+sounddevice
+flask
+pygrabber; sys_platform == "win32"

@@ -1,0 +1,1331 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Scramble Ritual · Morse 튜너</title>
+<style>
+  :root {
+    --bg: #101216; --panel: #191c22; --panel2: #22262e; --panel3: #2a2f39;
+    --text: #e8eaee; --dim: #98a0ac; --line: #333845;
+    --accent: #ffb347; --ok: #63d66f; --bad: #ff6b6b; --info: #5db3ff;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.55 "Segoe UI", "Malgun Gothic", sans-serif; }
+  header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--line);
+    position: sticky; top: 0; z-index: 5; }
+  header h1 { font-size: 16px; margin: 0 8px 0 0; color: var(--accent); }
+  .badge { display: inline-block; padding: 2px 10px; border-radius: 999px;
+    background: var(--panel3); border: 1px solid var(--line); font-size: 12.5px;
+    font-variant-numeric: tabular-nums; }
+  .badge.ok { color: var(--ok); border-color: var(--ok); }
+  .badge.bad { color: var(--bad); border-color: var(--bad); }
+  .badge.info { color: var(--info); border-color: var(--info); }
+  #error { color: var(--bad); font-size: 13px; }
+  main { display: flex; gap: 14px; padding: 14px; align-items: flex-start; }
+  #monitor { flex: 1 1 62%; min-width: 340px; }
+  #config { flex: 0 0 400px; max-height: calc(100vh - 78px); overflow-y: auto; }
+  .card { background: var(--panel); border: 1px solid var(--line);
+    border-radius: 10px; padding: 12px 14px; margin-bottom: 12px; }
+  .card h2 { font-size: 13.5px; margin: 0 0 10px; color: var(--accent);
+    letter-spacing: .02em; }
+  .card h2 .step { display: inline-block; width: 20px; height: 20px; line-height: 20px;
+    text-align: center; border-radius: 50%; background: var(--accent); color: #101216;
+    font-size: 12px; margin-right: 7px; }
+  .viewbox { position: relative; height: 58vh; display: flex; align-items: center;
+    justify-content: center; background: #000; border-radius: 8px; overflow: hidden; }
+  .viewbox img { max-height: 100%; max-width: 100%; width: auto; height: auto;
+    display: block; }
+  #roiLayer { position: absolute; inset: 0; cursor: crosshair; display: none; z-index: 3; }
+  /* while a ROI/template/calibrate drag is active it must sit ABOVE the
+     objects handle layer (z-index 5), otherwise object handles eat the drag
+     and the table range can't be set in the objects source */
+  #roiLayer.active { display: block; z-index: 7; }
+  #roiRect { position: absolute; border: 2px dashed var(--accent);
+    background: rgba(255,179,71,.15); display: none; pointer-events: none; z-index: 8; }
+  #objLayer { position: absolute; inset: 0; display: none; z-index: 5; }
+  #objLayer.active { display: block; }
+  .objHandle { position: absolute; width: 26px; height: 26px; margin: -13px 0 0 -13px;
+    border: 2px solid var(--info); border-radius: 50%; background: rgba(93,179,255,.18);
+    cursor: grab; display: flex; align-items: center; justify-content: center;
+    font-size: 11px; color: #fff; font-weight: 600; user-select: none; }
+  .objHandle.flip { border-color: var(--bad); background: rgba(255,107,107,.2); }
+  .objHandle .dir { position: absolute; width: 20px; height: 2px; background: var(--info);
+    left: 12px; transform-origin: left center; pointer-events: none; }
+  #objPopup { position: absolute; z-index: 6; display: none; background: var(--panel);
+    border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; width: 215px;
+    box-shadow: 0 6px 20px rgba(0,0,0,.5); }
+  #objPopup .prow { display: flex; align-items: center; gap: 6px; margin: 5px 0; font-size: 12px; }
+  #objPopup label { color: var(--dim); width: 42px; }
+  #objPopup input[type=range] { flex: 1; accent-color: var(--accent); }
+  #objPopup input[type=number], #objPopup select { flex: 1; background: var(--panel2);
+    border: 1px solid var(--line); color: var(--text); border-radius: 4px; padding: 2px 5px; }
+  .tabs { display: flex; gap: 6px; margin-bottom: 8px; flex-wrap: wrap; }
+  .tabs button, .btn { background: var(--panel2); color: var(--text);
+    border: 1px solid var(--line); padding: 6px 14px; border-radius: 7px;
+    cursor: pointer; font-size: 13px; }
+  .tabs button.active { background: var(--accent); color: #101216; border-color: var(--accent); }
+  .btn:hover, .tabs button:hover { border-color: var(--accent); }
+  .btn.primary { background: var(--accent); color: #101216; border-color: var(--accent); font-weight: 600; }
+  .btn.big { flex: 1; padding: 12px 10px; font-size: 15px; font-weight: 600; }
+  .btn.big.selected { background: var(--accent); color: #101216; border-color: var(--accent); }
+  .btn.danger { background: var(--bad); color: #101216; border-color: var(--bad); font-weight: 600; }
+  .btn:disabled { opacity: .45; cursor: default; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 7px 0; }
+  select, input[type=text], input[type=number] { background: var(--panel2);
+    border: 1px solid var(--line); color: var(--text); border-radius: 6px;
+    padding: 6px 9px; font-size: 13px; }
+  select:focus, input:focus { outline: 1px solid var(--accent); }
+  .field { margin: 4px 0 2px; }
+  .field select { width: 100%; }
+  .flabel { display: block; font-size: 12px; color: var(--dim); margin: 8px 0 4px; }
+  .sub { margin-top: 6px; padding-top: 8px; border-top: 1px dashed var(--line); }
+  .sub select { width: 100%; }
+  #transport { display: none; align-items: center; gap: 8px; margin-top: 8px; }
+  #transport input[type=range] { flex: 1; accent-color: var(--accent); }
+  #chips { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0 2px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px;
+    font-variant-numeric: tabular-nums; }
+  th, td { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--line); }
+  th { color: var(--dim); font-weight: 500; font-size: 12px; }
+  .mono { font-family: Consolas, monospace; letter-spacing: .06em; }
+  .ok { color: var(--ok); } .bad { color: var(--bad); } .dim { color: var(--dim); }
+  details { border: 1px solid var(--line); border-radius: 8px;
+    margin-bottom: 8px; background: var(--panel); }
+  details summary { cursor: pointer; padding: 8px 12px; color: var(--accent);
+    font-size: 13px; font-weight: 600; user-select: none; }
+  details[open] summary { border-bottom: 1px solid var(--line); }
+  details .body { padding: 6px 12px 10px; }
+  .opt { display: grid; grid-template-columns: 132px 1fr 66px; gap: 8px;
+    align-items: center; padding: 4px 0; }
+  .opt label { font-size: 13px; cursor: help; color: var(--text); }
+  .opt input[type=range] { width: 100%; accent-color: var(--accent); }
+  .opt input[type=number], .opt select { width: 100%; padding: 3px 6px; font-size: 12px; }
+  .opt input[type=checkbox] { justify-self: start; width: 18px; height: 18px;
+    accent-color: var(--accent); }
+  .mode-radios { grid-column: 2 / 4; display: grid;
+    grid-template-columns: repeat(3, 1fr); gap: 5px; }
+  .mode-radios label { display: flex; align-items: center; justify-content: center;
+    gap: 5px; padding: 6px 5px; border: 1px solid var(--line);
+    border-radius: 6px; background: var(--panel2); cursor: pointer; font-size: 12px; }
+  .mode-radios label:has(input:checked) { background: var(--accent);
+    border-color: var(--accent); color: #101216; font-weight: 700; }
+  .mode-radios input { margin: 0; accent-color: #101216; }
+  .axis { display: grid; grid-template-columns: 92px 1fr; gap: 8px;
+    align-items: center; padding: 4px 0; }
+  .axis > label { font-size: 13px; color: var(--text); cursor: help; }
+  .axis select { width: 100%; }
+  .axis select.manual { color: var(--dim); border-color: var(--info); }
+  @keyframes flashrow { 0% { background: rgba(255,179,71,.55); }
+    100% { background: transparent; } }
+  .opt.flash { animation: flashrow 1.4s ease-out; border-radius: 5px; }
+  #axisChange { min-height: 16px; font-family: Consolas, monospace; color: var(--info); }
+  .switch { display: flex; align-items: center; gap: 8px; }
+  .hint { color: var(--dim); font-size: 12px; margin: 4px 0 0; }
+  #toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%);
+    background: var(--accent); color: #101216; padding: 8px 18px; border-radius: 8px;
+    opacity: 0; transition: opacity .25s; pointer-events: none; font-weight: 600; z-index: 20; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Scramble Ritual · Morse 튜너</h1>
+  <span class="badge" id="srcBadge">소스: -</span>
+  <span class="badge" id="fpsBadge">fps -</span>
+  <span class="badge" id="oscBadge"
+        title="OSC 실제 송신 주기(초당 전송 사이클)와 사이클당 메시지 수">OSC 끔</span>
+  <button class="btn primary" id="inferBtn" onclick="toggleInfer()">추론 정지</button>
+  <span id="error"></span>
+</header>
+<main>
+  <!-- ================= Monitor (좌) ================= -->
+  <div id="monitor">
+    <div class="card" id="view">
+      <div class="tabs" id="viewTabs">
+        <button data-view="compare" class="active" title="같은 프레임을 좌=원본 / 우=전처리로 갈라서 같은 배율로 비교">원본 | 전처리</button>
+        <button data-view="enhanced" title="전처리가 끝난 grayscale 전체">대비 강화</button>
+        <button data-view="extract" title="고른 추출 방식이 각 blob을 선(1)/점(0) 중 무엇으로 판정했는지 영상 위에 표시">추출 진단</button>
+        <button data-view="lines" title="선으로 분류된 픽셀을 영상 위에 자홍색으로 표시">선 후보</button>
+        <button data-view="dots" title="선을 뺀 나머지(점 후보)를 영상 위에 초록색으로 표시">점 후보</button>
+        <button data-view="overlay" title="최종 glyph·체인·ID 판독 결과">오버레이</button>
+        <button data-view="mask" title="이진화 직후 후보 마스크(순수 흑백)">마스크</button>
+        <button data-view="raw" title="입력 프레임 원본">원본</button>
+      </div>
+      <div class="row" id="compareRow" style="margin:2px 0 6px">
+        <span style="font-size:12px;color:var(--dim)">원본 ↔ 전처리 분할</span>
+        <input type="range" id="compareSplit" min="0" max="1" step="0.01" value="0.5"
+               style="flex:1;accent-color:var(--accent)"
+               title="0%면 화면 전체가 전처리 결과, 100%면 전체가 원본 — 끝까지 밀면 전/후 전환">
+        <span class="badge" id="compareSplitVal">50%</span>
+      </div>
+      <div class="row" style="margin:2px 0 6px">
+        <button class="btn" id="roiBtn" onclick="toggleRoiDraw()">테이블 영역 지정</button>
+        <button class="btn" onclick="clearRoi()">영역 지우기</button>
+        <span class="badge" id="roiBadge">영역 없음</span>
+        <button class="btn" id="calBtn" onclick="toggleCalDraw()"
+                title="삼각형 한 변을 드래그해서 길이를 측정합니다. 이 값으로 긴장도가 오브제 크기 기준이 됩니다">한 변 측정</button>
+        <span class="badge info" id="calBadge">크기 미설정</span>
+      </div>
+      <div class="row" style="margin:2px 0 8px">
+        <span style="font-size:12px;color:var(--dim)">마커 학습:</span>
+        <select id="tmplLabel" style="width:84px">
+          <option value="square">네모</option>
+          <option value="triangle">세모</option>
+          <option value="pentagon">오각형</option>
+          <option value="hexagon">육각형</option>
+          <option value="star">별</option>
+          <option value="circle">원</option>
+          <option value="line">선</option>
+        </select>
+        <button class="btn" id="tmplBtn" onclick="toggleTemplateDraw()">이 라벨로 학습 (드래그)</button>
+        <button class="btn" onclick="clearTemplates()">템플릿 지우기</button>
+        <span class="badge info" id="tmplBadge">템플릿 -</span>
+      </div>
+      <div class="viewbox">
+        <img id="stream" src="/stream/compare" alt="stream">
+        <div id="roiLayer"></div>
+        <div id="roiRect"></div>
+        <div id="objLayer"></div>
+        <div id="objPopup"></div>
+      </div>
+      <div id="transport">
+        <button class="btn" id="playBtn" onclick="tp('toggle')">⏸ 일시정지</button>
+        <button class="btn" onclick="tp('step')">1프레임 ▸</button>
+        <button class="btn" onclick="tp('restart')">⟲ 처음</button>
+        <input type="range" id="seek" min="0" max="1000" value="0">
+        <span class="badge" id="vpos">0 / 0</span>
+      </div>
+      <div id="chips">
+        <span class="badge" id="chipGlyphs">글리프 -</span>
+        <span class="badge" id="chipCards">카드 -</span>
+        <span class="badge ok" id="chipStable">안정 -</span>
+        <span class="badge" id="chipSize">-</span>
+        <span class="badge info" id="chipPreprocess">전처리 OFF</span>
+        <span class="badge info" id="chipMethod"
+              title="현재 선택된 추출 방식과 그 방식의 실제 파라미터">추출 contour</span>
+        <span class="badge info" id="chipVerdict"
+              title="이번 프레임에서 이 방식이 선(1)/점(0)으로 판정한 blob 수. '추출 진단' 탭의 사각형 색과 같은 값">판정 -</span>
+        <span class="badge info" id="chipArea"
+              title="현재 프레임에서 실제 적용되는 면적 하한/상한(px). 하한=max(최소 면적px, 최소 면적 비율×픽셀수), 상한=최대 면적px(>0)면 그 값, 아니면 비율×픽셀수">면적 -</span>
+      </div>
+    </div>
+    <div class="card">
+      <h2>안정화 ID (투표 결과)</h2>
+      <table id="stableTbl"><thead><tr>
+        <th>트랙</th><th>ID</th><th>비트</th><th>상태</th><th>표</th><th>각도</th>
+      </tr></thead><tbody></tbody></table>
+      <h2 style="margin-top:14px">프레임 단위 인식</h2>
+      <table id="cardsTbl"><thead><tr>
+        <th>ID</th><th>비트</th><th>상태</th><th>점수</th><th>각도</th><th>중심</th>
+      </tr></thead><tbody></tbody></table>
+    </div>
+    <div class="card" id="oscCard" style="display:none">
+      <h2>OSC 모니터</h2>
+      <table id="oscTbl"><thead><tr><th>어드레스</th><th>값</th></tr></thead><tbody></tbody></table>
+    </div>
+  </div>
+
+  <!-- ================= Config (우) ================= -->
+  <div id="config">
+    <div class="card">
+      <h2><span class="step">1</span>소스</h2>
+      <div class="field">
+        <label class="flabel" for="sourceType">소스 타입</label>
+        <select id="sourceType" onchange="onSourceType()">
+          <option value="camera">카메라</option>
+          <option value="video">비디오</option>
+          <option value="image">이미지</option>
+          <option value="sim">시뮬레이션</option>
+          <option value="objects">오브제 (사운드)</option>
+        </select>
+      </div>
+
+      <!-- camera -->
+      <div class="sub" id="subCamera" style="display:none">
+        <label class="flabel">카메라 선택</label>
+        <div class="row">
+          <select id="camSel" style="flex:1" onchange="connectCamera()"></select>
+          <button class="btn" onclick="loadCameras(true)" title="목록 새로고침">↺</button>
+        </div>
+        <p class="hint">DirectShow 장치명 기준. 선택 즉시 연결. 다른 프로그램이 점유 중이면 실패할 수 있음.</p>
+        <label class="flabel">노출 / 플리커 (백라이트 밴딩 대응)</label>
+        <div class="row switch">
+          <input type="checkbox" id="camAuto" checked style="width:18px;height:18px;accent-color:var(--accent)">
+          <label for="camAuto" style="font-size:13px">자동 노출</label>
+          <select id="camPower" style="width:110px">
+            <option value="0">전원 주파수…</option>
+            <option value="1">50Hz (한국)</option>
+            <option value="2">60Hz</option>
+          </select>
+        </div>
+        <div class="row" id="camExpRow">
+          <span style="font-size:12px;color:var(--dim);width:52px">노출</span>
+          <input type="range" id="camExp" min="-13" max="-1" step="1" value="-6" style="flex:1;accent-color:var(--accent)">
+          <span class="badge" id="camExpVal">-6</span>
+          <button class="btn" onclick="applyCamera()">적용</button>
+        </div>
+        <p class="hint" id="camStatus">자동 노출을 끄고 노출 슬라이더로 가로 밴딩이 사라지는 값을 찾으세요(길게 줄수록 깜빡임이 평균화됨). 전원 주파수(50Hz)는 이 빌드에선 무효 → Windows 카메라 설정에서 지정.</p>
+      </div>
+
+      <!-- video -->
+      <div class="sub" id="subVideo" style="display:none">
+        <label class="flabel">비디오 선택 (sampleVideo/)</label>
+        <div class="row">
+          <select id="mediaSel" style="flex:1" onchange="insertMedia()"></select>
+          <button class="btn" onclick="loadMedia(true)" title="목록 새로고침">↺</button>
+        </div>
+        <div class="row">
+          <input type="text" id="mediaPath" placeholder="직접 경로 입력" style="flex:1">
+          <button class="btn" onclick="insertMedia(true)">삽입</button>
+        </div>
+        <p class="hint">선택 즉시 재생. 재생/일시정지·스텝·시크는 왼쪽 영상 아래 전송 바에서.</p>
+      </div>
+
+      <!-- image -->
+      <div class="sub" id="subImage" style="display:none">
+        <label class="flabel">이미지 선택 (sampleVideo/)</label>
+        <div class="row">
+          <select id="imageSel" style="flex:1" onchange="insertImage()"></select>
+          <button class="btn" onclick="loadMedia(true)" title="목록 새로고침">↺</button>
+        </div>
+        <div class="row">
+          <input type="text" id="imagePath" placeholder="직접 경로 입력" style="flex:1">
+          <button class="btn" onclick="insertImage(true)">적용</button>
+        </div>
+      </div>
+
+      <!-- simulation -->
+      <div class="sub" id="subSim" style="display:none">
+        <label class="flabel">시뮬레이션 선택</label>
+        <select id="simSel" onchange="insertSim()">
+          <option value="sim">검정 마커 (실내)</option>
+          <option value="sim-field">밝은 각인 (백라이트)</option>
+        </select>
+        <p class="hint">합성 카드 4장. 카메라·판 없이 인식/옵션 동작을 확인할 때.</p>
+      </div>
+
+      <!-- objects (sound dev) -->
+      <div class="sub" id="subObjects" style="display:none">
+        <label class="flabel">오브제 시뮬 (소리 개발 · OSC 송신)</label>
+        <div class="row">
+          <button class="btn primary" onclick="addObject()">+ 오브제 추가</button>
+          <button class="btn" onclick="clearObjects()">모두 삭제</button>
+          <span class="badge info" id="objBadge">오브제 0</span>
+        </div>
+        <div class="row">
+          <span style="font-size:12px;color:var(--dim);width:64px">자동 회전</span>
+          <input type="range" id="objSpin" min="-90" max="90" step="5" value="0"
+                 style="flex:1;accent-color:var(--accent)">
+          <span class="badge" id="objSpinVal">0°/s</span>
+        </div>
+        <div class="row switch">
+          <input type="checkbox" id="simDetect" checked
+                 style="width:18px;height:18px;accent-color:var(--accent)">
+          <label for="simDetect" style="font-size:13px">실제 추론 사용 (끄면 그라운드 트루스)</label>
+        </div>
+        <p class="hint">영상 위에서 오브제를 <b>드래그로 이동</b>, <b>클릭하면</b> 회전/뒤집기/ID/모양/피치 편집. 검출 없이 그라운드 트루스로 <b>거리→긴장도·flip→역재생·오브제별 주파수</b>를 OSC로 송신(아래 OSC 송신 켜기).</p>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2><span class="step">2</span>상황 축 (조합 선택)</h2>
+      <div id="axes"></div>
+      <div id="axisChange" class="hint"></div>
+    </div>
+
+    <div class="card">
+      <h2><span class="step">3</span>패턴 옵션 (공통)</h2>
+      <label class="flabel">config 저장/불러오기 (이름별 프로파일)</label>
+      <div class="row">
+        <input type="text" id="cfgName" placeholder="config 이름 (예: 현장A)" style="flex:1">
+        <button class="btn primary" onclick="saveCfg()">이름으로 저장</button>
+      </div>
+      <div class="row">
+        <select id="cfgSel" style="flex:1"></select>
+        <button class="btn" onclick="loadCfg()">불러오기</button>
+        <button class="btn" onclick="loadConfigs(true)" title="목록 새로고침">↺</button>
+      </div>
+      <div class="row">
+        <button class="btn" onclick="resetCfg()">기본값 복원</button>
+      </div>
+      <p class="hint">프로파일은 <code>configs/&lt;이름&gt;.json</code>에 저장. 불러오면 즉시 반영되고 <code>tracker/config.json</code>에도 미러링돼 CLI·재시작에 적용됨.</p>
+      <div id="options" style="margin-top:8px"></div>
+    </div>
+
+    <div class="card">
+      <h2>OSC 송신</h2>
+      <div class="row switch">
+        <input type="checkbox" id="oscEnable" style="width:18px;height:18px;accent-color:var(--accent)">
+        <label for="oscEnable">안정화 ID를 OSC로 송신</label>
+      </div>
+      <div class="row">
+        <input type="text" id="oscHost" style="width:130px" placeholder="127.0.0.1">
+        <input type="number" id="oscPort" style="width:80px" placeholder="9000">
+        <input type="text" id="oscPrefix" style="width:110px" placeholder="/scramble">
+        <button class="btn" onclick="applyOsc()">적용</button>
+      </div>
+      <div class="row">
+        <span style="font-size:12px;color:var(--dim);width:52px">형식</span>
+        <select id="oscFormat" style="flex:1">
+          <option value="list">리스트형 — [값, 값, …] (순서대로)</option>
+          <option value="dict">딕셔너리형 — [키, 값, 키, 값, …] (순서 불필요)</option>
+          <option value="json">JSON형 — 인자 1개(JSON 문자열), 파싱하면 {키:값}</option>
+        </select>
+      </div>
+      <div id="oscFieldOrder" class="hint" style="font-family:Consolas,monospace"></div>
+      <div class="row">
+        <span style="font-size:12px;color:var(--dim);width:52px">긴장 연결</span>
+        <select id="tensionConnect" style="flex:1">
+          <option value="all">전체 (n−1) — 본인 외 모든 오브제</option>
+          <option value="near">근접만 (반경 이내) — 먼 것 제외</option>
+          <option value="knn">최근접 k개</option>
+        </select>
+        <input type="number" id="tensionKnn" min="1" max="16" style="width:56px" title="knn일 때 최근접 개수">
+      </div>
+      <div class="row" id="linkRadiusRow">
+        <span style="font-size:12px;color:var(--dim);width:52px">연결 반경</span>
+        <input type="range" id="tensionLinkRadius" min="0.05" max="0.5" step="0.01" style="flex:1" title="near의 연결 반경 (테이블 긴 변 정규화). 작을수록 all과 차이가 커짐">
+        <span id="tensionLinkRadiusVal" style="font-size:12px;color:var(--dim);width:38px;text-align:right">0.20</span>
+      </div>
+      <div class="row">
+        <span style="font-size:12px;color:var(--dim);width:52px">결합</span>
+        <select id="tensionFold" style="flex:1">
+          <option value="max">max — 가장 팽팽한 쌍</option>
+          <option value="avg">avg — 평균 (먼 것 있으면 희석)</option>
+          <option value="min">min — 가장 느슨한 쌍</option>
+        </select>
+      </div>
+      <div class="row switch">
+        <input type="checkbox" id="showGraph" style="width:18px;height:18px;accent-color:var(--accent)">
+        <label for="showGraph">오버레이에 노드 연결(그래프) 표시</label>
+      </div>
+      <p class="hint">개별 오브제 <code>/obj</code>만 송신 — 각 오브제가 본인 제외 n−1개와의 거리로 계산한 <code>tension</code>을 포함. 값 정의는 <code>docs/osc-values.md</code></p>
+    </div>
+  </div>
+</main>
+<div id="toast"></div>
+<script>
+let schema = null;
+let uiMode = null;
+let inferOn = true;
+let seekDrag = false;
+
+function toast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.style.opacity = 1;
+  setTimeout(() => t.style.opacity = 0, 1600);
+}
+async function api(path, body) {
+  const r = await fetch(path, body === undefined ? {} :
+    { method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body) });
+  return r.json();
+}
+const pending = {};
+/* 마지막으로 알려진 서버 상태 + 아직 서버가 확인해주지 않은 내 변경(optimistic).
+   show_when 게이팅이 이 값으로 판단되므로, 폴링이 내 변경을 잠깐 되돌려서
+   컨트롤이 깜빡이는 일이 없어야 한다. */
+let lastCfg = {}, lastRuntime = {};
+const optimistic = {};
+
+function setLocal(key, value) {
+  optimistic[key] = value;
+  if (key in lastRuntime && !(key in lastCfg)) lastRuntime[key] = value;
+  else lastCfg[key] = value;
+}
+
+function postOpt(key, value) {
+  pending[key] = value;
+  setLocal(key, value);
+  const preprocessFilters = new Set([
+    'autocontrast_enabled', 'gamma_enabled', 'bilateral_enabled',
+    'clahe_enabled', 'unsharp_enabled'
+  ]);
+  // Checking a filter activates it immediately; no hidden second gate.
+  if (preprocessFilters.has(key) && value === true) {
+    pending.preprocess_enabled = true;
+    setLocal('preprocess_enabled', true);
+    const master = document.querySelector('[data-key="preprocess_enabled"]');
+    if (master) master.checked = true;
+  }
+  applyVisibility();   // 종속 컨트롤은 클릭 즉시 나타나고/사라져야 한다
+  clearTimeout(postOpt._t);
+  postOpt._t = setTimeout(() => {
+    const batch = {...pending};
+    for (const k in pending) delete pending[k];
+    api('/api/config', batch);
+  }, 150);
+}
+
+/* ---------- 소스 타입 → 하위 선택 ---------- */
+function showSub(type) {
+  document.getElementById('subCamera').style.display = type === 'camera' ? '' : 'none';
+  document.getElementById('subVideo').style.display = type === 'video' ? '' : 'none';
+  document.getElementById('subImage').style.display = type === 'image' ? '' : 'none';
+  document.getElementById('subSim').style.display = type === 'sim' ? '' : 'none';
+  document.getElementById('subObjects').style.display = type === 'objects' ? '' : 'none';
+}
+function onSourceType() {
+  uiMode = document.getElementById('sourceType').value;
+  showSub(uiMode);
+  if (uiMode === 'camera') loadCameras();
+  else if (uiMode === 'video') loadMedia();
+  else if (uiMode === 'image') loadMedia();
+  else if (uiMode === 'sim') insertSim();  // 시뮬은 선택 즉시 적용
+  else if (uiMode === 'objects') api('/api/source', { type: 'objects' });
+}
+
+/* ---------- 카메라 ---------- */
+async function loadCameras(notify) {
+  const d = await api('/api/cameras');
+  const sel = document.getElementById('camSel');
+  sel.innerHTML = '';
+  for (const cam of d.cameras) {
+    const o = document.createElement('option');
+    o.value = cam.index;
+    o.textContent = `[${cam.index}] ${cam.name}`;
+    sel.appendChild(o);
+  }
+  if (notify) toast(`카메라 ${d.cameras.length}대 검색됨`);
+}
+async function connectCamera() {
+  const idx = +document.getElementById('camSel').value;
+  await api('/api/source', { type: 'camera', arg: idx });
+  toast(`카메라 연결: ${document.getElementById('camSel').selectedOptions[0]?.textContent}`);
+}
+async function applyCamera() {
+  const auto = document.getElementById('camAuto').checked;
+  await api('/api/camera', {
+    cam_auto_exposure: auto,
+    cam_exposure: +document.getElementById('camExp').value,
+    cam_powerline: +document.getElementById('camPower').value,
+  });
+  toast(auto ? '자동 노출' : '수동 노출 적용');
+}
+document.getElementById('camExp').addEventListener('input', e => {
+  document.getElementById('camExpVal').textContent = e.target.value;
+  applyCamera();  // live: slide and watch the banding
+});
+document.getElementById('camAuto').addEventListener('change', () => {
+  document.getElementById('camExpRow').style.opacity =
+    document.getElementById('camAuto').checked ? 0.5 : 1;
+  applyCamera();
+});
+document.getElementById('camPower').addEventListener('change', applyCamera);
+
+/* ---------- 비디오/이미지 ---------- */
+async function loadMedia(notify) {
+  const kind = uiMode === 'image' ? 'image' : 'video';
+  const d = await api(`/api/media?kind=${kind}`);
+  const sel = document.getElementById(kind === 'image' ? 'imageSel' : 'mediaSel');
+  sel.innerHTML = '';
+  for (const m of d.media) {
+    const o = document.createElement('option');
+    o.value = m.path; o.textContent = m.name;
+    sel.appendChild(o);
+  }
+  if (notify) toast(`파일 ${d.media.length}개`);
+}
+async function insertMedia(useManual) {
+  const manual = document.getElementById('mediaPath').value.trim();
+  const path = (useManual && manual) || document.getElementById('mediaSel').value;
+  if (!path) return toast('파일을 선택하세요');
+  await api('/api/source', { type: 'video', arg: path });
+  toast('비디오: ' + path.split(/[\\/]/).pop());
+}
+async function insertImage(useManual) {
+  const manual = document.getElementById('imagePath').value.trim();
+  const path = (useManual && manual) || document.getElementById('imageSel').value;
+  if (!path) return toast('파일을 선택하세요');
+  await api('/api/source', { type: 'image', arg: path });
+  toast('이미지: ' + path.split(/[\\/]/).pop());
+}
+
+/* ---------- 시뮬레이션 ---------- */
+async function insertSim() {
+  const mode = document.getElementById('simSel').value;
+  await api('/api/source', { type: mode });
+  toast('시뮬레이션: ' + (mode === 'sim-field' ? '백라이트' : '검정'));
+}
+
+/* ---------- 테이블 영역(ROI) 지정 ---------- */
+let dragPurpose = null, roiStart = null;  // dragPurpose: 'roi' | 'template'
+const roiLayer = document.getElementById('roiLayer');
+const roiRectEl = document.getElementById('roiRect');
+
+function setDragMode(purpose) {
+  dragPurpose = (dragPurpose === purpose) ? null : purpose;
+  roiLayer.classList.toggle('active', !!dragPurpose);
+  const rb = document.getElementById('roiBtn'), tb = document.getElementById('tmplBtn');
+  const cb = document.getElementById('calBtn');
+  rb.classList.toggle('primary', dragPurpose === 'roi');
+  rb.textContent = dragPurpose === 'roi' ? '지정 취소' : '테이블 영역 지정';
+  tb.classList.toggle('primary', dragPurpose === 'template');
+  tb.textContent = dragPurpose === 'template' ? '학습 취소' : '이 라벨로 학습 (드래그)';
+  cb.classList.toggle('primary', dragPurpose === 'calibrate');
+  cb.textContent = dragPurpose === 'calibrate' ? '측정 취소' : '한 변 측정';
+  if (dragPurpose === 'roi') toast('영상 위에서 드래그해 영역을 지정하세요');
+  if (dragPurpose === 'template') toast('학습할 마커를 드래그로 감싸세요');
+  if (dragPurpose === 'calibrate') toast('삼각형 한 변의 시작점→끝점을 드래그하세요');
+}
+function toggleRoiDraw() { setDragMode('roi'); }
+function toggleTemplateDraw() { setDragMode('template'); }
+function toggleCalDraw() { setDragMode('calibrate'); }
+async function clearRoi() {
+  await api('/api/roi', { roi: null });
+  toast('영역 지움');
+}
+async function clearTemplates() {
+  await api('/api/template/clear', {});
+  toast('템플릿 지움');
+}
+function imgRect() { return document.getElementById('stream').getBoundingClientRect(); }
+
+roiLayer.addEventListener('mousedown', e => {
+  if (!dragPurpose) return;
+  roiStart = { x: e.clientX, y: e.clientY };
+  roiRectEl.style.display = 'block';
+  e.preventDefault();
+});
+window.addEventListener('mousemove', e => {
+  if (!roiStart) return;
+  const r = imgRect(), vb = roiLayer.getBoundingClientRect();
+  const x1 = Math.max(r.left, Math.min(roiStart.x, e.clientX));
+  const y1 = Math.max(r.top, Math.min(roiStart.y, e.clientY));
+  const x2 = Math.min(r.right, Math.max(roiStart.x, e.clientX));
+  const y2 = Math.min(r.bottom, Math.max(roiStart.y, e.clientY));
+  roiRectEl.style.left = (x1 - vb.left) + 'px';
+  roiRectEl.style.top = (y1 - vb.top) + 'px';
+  roiRectEl.style.width = Math.max(0, x2 - x1) + 'px';
+  roiRectEl.style.height = Math.max(0, y2 - y1) + 'px';
+});
+window.addEventListener('mouseup', async e => {
+  if (!roiStart) return;
+  const s = roiStart; roiStart = null;
+  roiRectEl.style.display = 'none';
+  const r = imgRect();
+  const x1 = Math.max(r.left, Math.min(s.x, e.clientX));
+  const y1 = Math.max(r.top, Math.min(s.y, e.clientY));
+  const x2 = Math.min(r.right, Math.max(s.x, e.clientX));
+  const y2 = Math.min(r.bottom, Math.max(s.y, e.clientY));
+  const purpose = dragPurpose;
+  if (purpose === 'calibrate') {
+    // a LINE along one edge: length only, so a horizontal drag is valid
+    if (Math.hypot(x2 - x1, y2 - y1) < 8) return toast('너무 짧습니다');
+    const res = await api('/api/calibrate', {
+      x1: (x1 - r.left) / r.width, y1: (y1 - r.top) / r.height,
+      x2: (x2 - r.left) / r.width, y2: (y2 - r.top) / r.height });
+    setDragMode('calibrate');   // exit
+    return toast(res.ok ? `한 변 = ${res.object_side_px}px` : '측정 실패: ' + res.error);
+  }
+  if (x2 - x1 < 8 || y2 - y1 < 8) return toast('영역이 너무 작습니다');
+  const roi = [(x1 - r.left) / r.width, (y1 - r.top) / r.height,
+               (x2 - x1) / r.width, (y2 - y1) / r.height];
+  if (purpose === 'template') {
+    const label = document.getElementById('tmplLabel').value;
+    const res = await api('/api/template/capture', { label, roi });
+    toast(res.ok ? `학습됨: ${label} (총 ${res.count})` : '학습 실패: ' + res.error);
+    // 학습 모드는 유지 (여러 마커 연속 학습)
+  } else {
+    await api('/api/roi', { roi });
+    setDragMode('roi');  // exit
+    toast('테이블 영역 설정됨');
+  }
+});
+
+/* ---------- 오브제 시뮬 (드래그 이동 + 클릭 편집) ---------- */
+let objState = [];
+let objDrag = null;
+const objLayer = document.getElementById('objLayer');
+const objPopup = document.getElementById('objPopup');
+
+async function addObject() {
+  const r = await api('/api/object', { action: 'add', x: 0.5, y: 0.5,
+                                       code_id: (objState.length % 20) + 1 });
+  objState = r.objects; toast('오브제 추가 (총 ' + objState.length + ')');
+}
+async function clearObjects() {
+  const r = await api('/api/object', { action: 'clear' });
+  objState = r.objects; objPopup.style.display = 'none'; toast('오브제 모두 삭제');
+}
+async function removeObject(idx) {
+  const r = await api('/api/object', { action: 'remove', index: idx });
+  objState = r.objects; objPopup.style.display = 'none';
+}
+async function objUpdate(idx, fields) {
+  // Apply edits optimistically so tilt/flip feedback is visible immediately,
+  // instead of waiting for the next 500 ms state poll.
+  if (objState[idx]) Object.assign(objState[idx], fields);
+  renderObjHandles();
+  const r = await api('/api/object', { action: 'update', index: idx, ...fields });
+  if (r.objects) objState = r.objects;
+}
+function setTilt(idx, deg) {
+  const v = Math.max(-180, Math.min(180, Math.round(deg)));
+  const s = document.getElementById('pTilt'), n = document.getElementById('pTiltN');
+  if (s) s.value = v;
+  if (n) n.value = v;
+  if (objState[idx]) objState[idx].tilt = v;
+  objUpdate(idx, { tilt: v });
+}
+function nudgeTilt(idx, delta) {
+  const n = document.getElementById('pTiltN');
+  setTilt(idx, (n ? +n.value : (objState[idx] || {}).tilt || 0) + delta);
+}
+function setFlip(idx, flipped) {
+  const v = !!flipped;
+  const checkbox = document.getElementById('pFlip');
+  const button = document.getElementById('pFlipButton');
+  if (checkbox) checkbox.checked = v;
+  if (button) {
+    button.textContent = v ? 'Flip ON' : 'Flip OFF';
+    button.classList.toggle('primary', v);
+  }
+  objUpdate(idx, { flip: v });
+}
+function toggleFlip(idx) {
+  setFlip(idx, !(objState[idx] || {}).flip);
+}
+document.getElementById('objSpin').addEventListener('input', e => {
+  document.getElementById('objSpinVal').textContent = e.target.value + '°/s';
+  postOpt('sim_spin', +e.target.value);
+});
+document.getElementById('simDetect').addEventListener('change', e => {
+  postOpt('sim_detect', e.target.checked);
+});
+
+function renderObjHandles() {
+  if (objDrag) return;                 // don't clobber a live drag
+  const r = imgRect(), vb = objLayer.getBoundingClientRect();
+  objLayer.innerHTML = '';
+  objState.forEach((o, i) => {
+    const h = document.createElement('div');
+    h.className = 'objHandle' + (o.flip ? ' flip' : '');
+    h.style.left = (r.left - vb.left + o.x * r.width) + 'px';
+    h.style.top = (r.top - vb.top + o.y * r.height) + 'px';
+    h.textContent = o.code_id;
+    const dir = document.createElement('div');
+    dir.className = 'dir';
+    dir.style.transform = `rotate(${o.tilt}deg)`;
+    h.appendChild(dir);
+    h.addEventListener('mousedown', e => {
+      e.preventDefault(); e.stopPropagation();
+      objDrag = { idx: i, el: h, moved: false, sx: e.clientX, sy: e.clientY };
+      h.style.cursor = 'grabbing';
+    });
+    objLayer.appendChild(h);
+  });
+}
+window.addEventListener('mousemove', e => {
+  if (!objDrag) return;
+  if (Math.abs(e.clientX - objDrag.sx) + Math.abs(e.clientY - objDrag.sy) > 3)
+    objDrag.moved = true;
+  const r = imgRect(), vb = objLayer.getBoundingClientRect();
+  const x = Math.max(r.left, Math.min(r.right, e.clientX));
+  const y = Math.max(r.top, Math.min(r.bottom, e.clientY));
+  objDrag.el.style.left = (x - vb.left) + 'px';
+  objDrag.el.style.top = (y - vb.top) + 'px';
+  objDrag.nx = (x - r.left) / r.width;
+  objDrag.ny = (y - r.top) / r.height;
+  // live-post while dragging (throttled) so the rendered plate follows the
+  // cursor instead of jumping only on mouseup
+  const now = performance.now();
+  if (!objDrag.lastPost || now - objDrag.lastPost > 40) {
+    objDrag.lastPost = now;
+    api('/api/object', { action: 'move', index: objDrag.idx,
+                         x: objDrag.nx, y: objDrag.ny });
+  }
+});
+window.addEventListener('mouseup', async () => {
+  if (!objDrag) return;
+  const d = objDrag; objDrag = null;
+  if (d.el) d.el.style.cursor = 'grab';
+  if (d.moved) {
+    const r = await api('/api/object', { action: 'move', index: d.idx, x: d.nx, y: d.ny });
+    objState = r.objects;
+  } else {
+    openObjPopup(d.idx);
+  }
+});
+
+function openObjPopup(idx) {
+  const o = objState[idx];
+  if (!o) return;
+  const r = imgRect(), vb = objLayer.getBoundingClientRect();
+  objPopup.style.left = Math.min(r.right - vb.left - 196,
+                                 o.x * r.width + (r.left - vb.left) + 18) + 'px';
+  objPopup.style.top = Math.max(0, o.y * r.height + (r.top - vb.top) - 20) + 'px';
+  objPopup.innerHTML =
+    `<div class="prow"><label>ID</label><input type="number" id="pID" min="1" max="20" value="${o.code_id}"></div>
+     <div class="prow"><label>기울기</label><input type="range" id="pTilt" min="-180" max="180" step="1" value="${o.tilt}"><input type="number" id="pTiltN" min="-180" max="180" step="1" value="${Math.round(o.tilt)}" style="flex:0 0 54px;width:54px"></div>
+     <div class="prow"><label></label><button class="btn" style="flex:1;padding:2px 6px" onclick="nudgeTilt(${idx},-15)">−15°</button><button class="btn" style="flex:1;padding:2px 6px" onclick="nudgeTilt(${idx},15)">+15°</button><button class="btn" style="flex:1;padding:2px 6px" onclick="setTilt(${idx},0)">0°</button></div>
+     <div class="prow"><label>모양</label><select id="pShape"><option value="triangle">세모</option><option value="square">네모</option><option value="pentagon">오각형</option><option value="hexagon">육각형</option><option value="star">별</option></select></div>
+     <div class="prow"><label>피치</label><input type="range" id="pPitch" min="-12" max="12" value="${o.pitch ?? 0}"><span id="pPitchV">${o.pitch ?? 0}</span></div>
+     <div class="prow"><label>반전</label><input type="checkbox" id="pFlip" ${o.flip ? 'checked' : ''}><button class="btn ${o.flip ? 'primary' : ''}" id="pFlipButton" style="flex:1" onclick="toggleFlip(${idx})">Flip ${o.flip ? 'ON' : 'OFF'}</button></div>
+     <div class="hint" style="margin:0 0 6px 64px">물리 오브제를 상하로 뒤집은 상태 · 모스 띠가 반대편으로 이동 · OSC <code>flip</code>: OFF=0, ON=1</div>
+     <div class="prow"><button class="btn" onclick="objPopup.style.display='none'">닫기</button><button class="btn danger" onclick="removeObject(${idx})">삭제</button></div>`;
+  document.getElementById('pShape').value = o.shape || 'triangle';
+  document.getElementById('pID').onchange = e => objUpdate(idx, { code_id: +e.target.value });
+  const tSlider = document.getElementById('pTilt'), tNum = document.getElementById('pTiltN');
+  tSlider.oninput = e => { tNum.value = e.target.value; objUpdate(idx, { tilt: +e.target.value }); };
+  tNum.onchange = e => {                 // 숫자 직접 입력으로 정확한 각도 지정
+    let v = Math.max(-180, Math.min(180, Math.round(+e.target.value || 0)));
+    e.target.value = v; tSlider.value = v; objUpdate(idx, { tilt: v }); };
+  document.getElementById('pShape').onchange = e => objUpdate(idx, { shape: e.target.value });
+  document.getElementById('pPitch').oninput = e => {
+    document.getElementById('pPitchV').textContent = e.target.value;
+    objUpdate(idx, { pitch: +e.target.value }); };
+  document.getElementById('pFlip').onchange = e => setFlip(idx, e.target.checked);
+  objPopup.style.display = 'block';
+}
+
+/* ---------- 비디오 전송 제어 ---------- */
+async function tp(action) { await api('/api/transport', { action }); }
+const seekEl = document.getElementById('seek');
+seekEl.addEventListener('input', () => seekDrag = true);
+seekEl.addEventListener('change', async () => {
+  await api('/api/transport', { seek: seekEl.value / 1000 });
+  seekDrag = false;
+});
+
+/* ---------- 파이프라인 ---------- */
+async function toggleInfer() {
+  inferOn = !inferOn;
+  await api('/api/pipeline', { infer: inferOn });
+  updateInferBtn();
+}
+function updateInferBtn() {
+  const b = document.getElementById('inferBtn');
+  b.textContent = inferOn ? '추론 정지' : '추론 시작';
+  b.className = inferOn ? 'btn danger' : 'btn primary';
+}
+
+/* ---------- OSC ---------- */
+function applyOsc() {
+  postOpt('osc_host', document.getElementById('oscHost').value || '127.0.0.1');
+  postOpt('osc_port', +document.getElementById('oscPort').value || 9000);
+  postOpt('osc_prefix', document.getElementById('oscPrefix').value || '/scramble');
+  postOpt('osc_enabled', document.getElementById('oscEnable').checked);
+  toast('OSC 설정 적용');
+}
+document.getElementById('oscEnable').addEventListener('change', applyOsc);
+function renderOscFieldOrder(fmt) {
+  const f = (schema && schema.osc_fields) || {};
+  const host = document.getElementById('oscFieldOrder');
+  if (!f.obj) { host.textContent = ''; return; }
+  if (fmt === 'json') {
+    host.innerHTML = `인자 1개 = JSON 문자열. 파싱하면 {키:값}<br>`
+      + `/obj 키: {${f.obj.map(n => '"' + n + '"').join(', ')}}`;
+  } else if (fmt === 'dict') {
+    host.innerHTML = `/obj &nbsp;["bits",값, "x",값, …]<br>`
+      + `키가 함께 오므로 순서 무관. 키: obj=${f.obj.join(', ')}`;
+  } else {
+    host.innerHTML = `<b>리스트 순서</b><br>`
+      + `/obj &nbsp;[${f.obj.map((n, i) => `${i}:${n}`).join(', ')}]`;
+  }
+}
+document.getElementById('oscFormat').addEventListener('change', e => {
+  postOpt('osc_format', e.target.value);
+  renderOscFieldOrder(e.target.value);
+  toast({list:'리스트형 OSC', dict:'딕셔너리형 OSC', json:'JSON형 OSC'}[e.target.value]);
+});
+function syncConnectRows(mode) {
+  document.getElementById('tensionKnn').style.display = mode === 'knn' ? '' : 'none';
+  document.getElementById('linkRadiusRow').style.display = mode === 'near' ? '' : 'none';
+}
+document.getElementById('tensionConnect').addEventListener('change', e => {
+  postOpt('tension_connect', e.target.value);
+  syncConnectRows(e.target.value);
+  toast('긴장 연결: ' + e.target.value);
+});
+document.getElementById('tensionKnn').addEventListener('change', e => {
+  postOpt('tension_knn', +e.target.value || 3);
+});
+document.getElementById('tensionLinkRadius').addEventListener('input', e => {
+  document.getElementById('tensionLinkRadiusVal').textContent =
+    (+e.target.value).toFixed(2);
+  postOpt('tension_link_radius', +e.target.value);
+});
+document.getElementById('tensionFold').addEventListener('change', e => {
+  postOpt('tension_fold', e.target.value);
+  toast('긴장 결합: ' + e.target.value);
+});
+document.getElementById('showGraph').addEventListener('change', e => {
+  postOpt('show_graph', e.target.checked);
+  toast(e.target.checked ? '그래프 표시' : '그래프 숨김');
+});
+
+/* ---------- 3) 패턴 옵션 (공통) ---------- */
+function widget(opt, value) {
+  const row = document.createElement('div');
+  row.className = 'opt';
+  row.dataset.optKey = opt.key;
+  const lab = document.createElement('label');
+  lab.textContent = opt.label;
+  lab.title = opt.help || '';
+  row.appendChild(lab);
+  if (opt.key === 'extraction_mode') {
+    const modes = document.createElement('div');
+    modes.className = 'mode-radios';
+    modes.dataset.radioKey = opt.key;
+    for (const mode of opt.options) {
+      const choice = document.createElement('label');
+      const radio = document.createElement('input');
+      radio.type = 'radio';
+      radio.name = 'extraction_mode';
+      radio.value = mode;
+      radio.checked = mode === value;
+      radio.onchange = () => {
+        if (radio.checked) postOpt(opt.key, mode);
+      };
+      choice.appendChild(radio);
+      choice.appendChild(document.createTextNode(mode));
+      modes.appendChild(choice);
+    }
+    row.appendChild(modes);
+  } else if (opt.kind === 'bool') {
+    const cb = document.createElement('input');
+    cb.type = 'checkbox'; cb.checked = !!value; cb.dataset.key = opt.key;
+    cb.onchange = () => postOpt(opt.key, cb.checked);
+    row.appendChild(cb); row.appendChild(document.createElement('span'));
+  } else if (opt.kind === 'select') {
+    const sel = document.createElement('select');
+    sel.dataset.key = opt.key;
+    for (const o of opt.options) {
+      const el = document.createElement('option');
+      el.value = el.textContent = o; sel.appendChild(el);
+    }
+    sel.value = value;
+    sel.onchange = () => postOpt(opt.key, sel.value);
+    row.appendChild(sel); row.appendChild(document.createElement('span'));
+  } else {
+    const rng = document.createElement('input');
+    rng.type = 'range'; rng.min = opt.min; rng.max = opt.max; rng.step = opt.step;
+    rng.value = value; rng.dataset.key = opt.key;
+    const num = document.createElement('input');
+    num.type = 'number'; num.min = opt.min; num.max = opt.max; num.step = opt.step;
+    num.value = value; num.dataset.keyNum = opt.key;
+    const send = v => postOpt(opt.key, opt.kind === 'int' ? Math.round(+v) : +v);
+    rng.oninput = () => { num.value = rng.value; send(rng.value); };
+    num.onchange = () => { rng.value = num.value; send(num.value); };
+    row.appendChild(rng); row.appendChild(num);
+  }
+  return row;
+}
+
+function buildOptions(cfg, runtime) {
+  const host = document.getElementById('options');
+  host.innerHTML = '';
+  const groups = {};
+  for (const opt of schema.options) {
+    if (!groups[opt.group]) {
+      const det = document.createElement('details');
+      // 이번 작업의 초점인 두 그룹은 펼친 채로 시작한다
+      if (['이진화', '입력 전처리', 'Glyph 추출 방식'].includes(opt.group))
+        det.open = true;
+      const sum = document.createElement('summary');
+      sum.textContent = opt.group;
+      const body = document.createElement('div');
+      body.className = 'body';
+      det.appendChild(sum); det.appendChild(body);
+      host.appendChild(det);
+      groups[opt.group] = body;
+    }
+    const value = opt.scope === 'runtime' ? runtime[opt.key] : cfg[opt.key];
+    groups[opt.group].appendChild(widget(opt, value));
+  }
+  applyVisibility();
+}
+
+/* ---------- 종속 컨트롤 (show_when) ----------
+   추출 방식은 셋 중 하나만 동작하고, 전처리 필터는 켠 것만 동작한다.
+   동작하지 않는 컨트롤은 보이지도, 조작되지도 않아야 한다 — 만져도 아무
+   일이 없는 슬라이더가 남아 있으면 그게 곧 오해의 원인이다. */
+function curVal(key) {
+  return (key in lastCfg) ? lastCfg[key] : lastRuntime[key];
+}
+function optVisible(opt) {
+  if (!opt.show_when) return true;
+  return Object.entries(opt.show_when).every(([k, want]) => {
+    const cur = curVal(k);
+    return Array.isArray(want) ? want.includes(cur) : cur === want;
+  });
+}
+function applyVisibility() {
+  if (!schema) return;
+  for (const opt of schema.options) {
+    const row = document.querySelector(`.opt[data-opt-key="${opt.key}"]`);
+    if (!row) continue;
+    const show = optVisible(opt);
+    row.style.display = show ? '' : 'none';
+    row.querySelectorAll('input, select').forEach(el => { el.disabled = !show; });
+  }
+  // 그룹 안의 컨트롤이 전부 숨겨지면 그룹 자체도 접어서 보이지 않게 한다
+  document.querySelectorAll('#options details').forEach(det => {
+    const any = [...det.querySelectorAll('.opt')]
+      .some(r => r.style.display !== 'none');
+    det.style.display = any ? '' : 'none';
+  });
+}
+
+function syncValues(cfg, runtime) {
+  for (const opt of schema.options) {
+    const value = opt.scope === 'runtime' ? runtime[opt.key] : cfg[opt.key];
+    if (opt.key === 'extraction_mode') {
+      const radio = document.querySelector(
+        `input[name="extraction_mode"][value="${value}"]`);
+      if (radio && document.activeElement !== radio) radio.checked = true;
+      continue;
+    }
+    const el = document.querySelector(`[data-key="${opt.key}"]`);
+    const num = document.querySelector(`[data-key-num="${opt.key}"]`);
+    if (!el || document.activeElement === el || document.activeElement === num) continue;
+    if (opt.kind === 'bool') el.checked = !!value;
+    else el.value = value;
+    if (num) num.value = value;
+  }
+}
+
+function fillTable(id, rows, cols) {
+  const tb = document.querySelector(`#${id} tbody`);
+  tb.innerHTML = '';
+  for (const r of rows) {
+    const tr = document.createElement('tr');
+    for (const c of cols) {
+      const td = document.createElement('td');
+      const [text, cls] = c(r);
+      td.textContent = text;
+      if (cls) td.className = cls;
+      tr.appendChild(td);
+    }
+    tb.appendChild(tr);
+  }
+}
+
+/* ---------- 상태 폴링 ---------- */
+async function poll() {
+  try {
+    const st = await api('/api/state');
+    const res = st.results;
+    // 서버 상태를 받되, 아직 확인되지 않은 내 변경은 덮어쓰지 않는다
+    lastCfg = {...st.cfg};
+    lastRuntime = {...st.runtime};
+    for (const [k, v] of Object.entries(optimistic)) {
+      if (curVal(k) === v) delete optimistic[k];
+      else setLocal(k, v);
+    }
+    applyVisibility();
+    document.getElementById('srcBadge').textContent = '소스: ' + st.source;
+    document.getElementById('fpsBadge').textContent = 'fps ' + res.fps;
+    const ob = document.getElementById('oscBadge');
+    if (res.osc_fps > 0) {
+      const perSec = Math.round(res.osc_fps * (res.osc_msgs || 0));
+      ob.textContent = `OSC ${res.osc_fps}fps · ${res.osc_msgs}msg (${perSec}/s)`;
+      ob.className = 'badge ok';
+    } else {
+      ob.textContent = 'OSC 끔';
+      ob.className = 'badge';
+    }
+    document.getElementById('chipGlyphs').textContent = '글리프 ' + res.glyphs;
+    document.getElementById('chipCards').textContent = '카드 ' + res.cards.length;
+    const stableIds = res.stable.filter(s => s.id !== null)
+      .map(s => 'ID' + String(s.id).padStart(2, '0')).join(' ');
+    document.getElementById('chipStable').textContent = '안정 ' + (stableIds || '-');
+    document.getElementById('chipSize').textContent = res.size[0] + 'x' + res.size[1];
+    // 비율 파라미터가 이 프레임에서 실제 몇 px이 되는지 보여줌 (비율은 감이 안 오므로)
+    const fa = res.size[0] * res.size[1];
+    if (fa > 0 && st.cfg) {
+      const floor = Math.max(st.cfg.min_glyph_area_px,
+                             st.cfg.min_glyph_area_frac * fa);
+      const ceil = st.cfg.max_glyph_area_px > 0 ? st.cfg.max_glyph_area_px
+                                                : st.cfg.max_glyph_area_frac * fa;
+      document.getElementById('chipArea').textContent =
+        `면적 ${Math.round(floor)}~${Math.round(ceil)}px`;
+    }
+    document.getElementById('error').textContent = res.error ? '⚠ ' + res.error : '';
+    if (st.cfg) {
+      const filterKeys = [
+        ['autocontrast_enabled', 'Auto'], ['gamma_enabled', 'Gamma'],
+        ['bilateral_enabled', 'Bilateral'], ['clahe_enabled', 'CLAHE'],
+        ['unsharp_enabled', 'Unsharp']
+      ];
+      const enabled = filterKeys.filter(([k]) => st.cfg[k]).map(([, n]) => n);
+      const pp = document.getElementById('chipPreprocess');
+      // 서버가 보고하는 소스 이름은 sim / sim-field / objects 다
+      const isSynthetic = /^(sim|objects)/i.test(st.source || '');
+      if (isSynthetic) {
+        pp.textContent = '전처리 미적용(시뮬레이션)';
+        pp.className = 'badge';
+      } else if (!st.cfg.preprocess_enabled) {
+        pp.textContent = '전처리 OFF';
+        pp.className = 'badge';
+      } else {
+        pp.textContent = '전처리 ON: ' + (enabled.join('+') || '추가 필터 없음');
+        pp.className = 'badge ok';
+      }
+    }
+    const ex = res.extract;
+    if (ex) {
+      document.getElementById('chipMethod').textContent =
+        `추출 [${ex.mode}] ${ex.params}`;
+      const vd = document.getElementById('chipVerdict');
+      vd.textContent = `판정 선 ${ex.dash} / 점 ${ex.dot}`
+        + (ex.mode === 'contour' ? '' : ` (선 ${ex.line_px}px)`);
+      vd.className = ex.dash || ex.dot ? 'badge ok' : 'badge';
+    }
+    if (inferOn !== res.infer) { inferOn = res.infer; updateInferBtn(); }
+    const roi = st.runtime && st.runtime.roi;
+    document.getElementById('roiBadge').textContent = roi
+      ? `ROI ${Math.round(roi[2] * 100)}×${Math.round(roi[3] * 100)}%` : '영역 없음';
+    const tmpl = st.templates || [];
+    document.getElementById('tmplBadge').textContent = tmpl.length
+      ? '템플릿 ' + tmpl.join(',') : '템플릿 없음';
+    const side = st.runtime && st.runtime.object_side_px;
+    const cbd = document.getElementById('calBadge');
+    if (st.tension_basis && st.tension_basis !== 'fixed') {
+      cbd.textContent = `한 변 ${side ? side + 'px' : '자동'}`;
+      cbd.className = 'badge ok';
+    } else {
+      cbd.textContent = '크기 미설정';
+      cbd.className = 'badge info';
+    }
+    if (st.cam_status)
+      document.getElementById('camStatus').textContent = '카메라 적용: ' + st.cam_status;
+    // 오브제 핸들 (objects 소스일 때만)
+    if (st.source === 'objects') {
+      objLayer.classList.add('active');
+      objState = st.objects || [];
+      const b = document.getElementById('objBadge');
+      if (b) b.textContent = '오브제 ' + objState.length;
+      renderObjHandles();
+    } else {
+      objLayer.classList.remove('active');
+      objPopup.style.display = 'none';
+    }
+
+    const tpBar = document.getElementById('transport');
+    if (res.video) {
+      tpBar.style.display = 'flex';
+      document.getElementById('playBtn').textContent = res.video.paused ? '▶ 재생' : '⏸ 일시정지';
+      document.getElementById('vpos').textContent = `${res.video.pos} / ${res.video.total}`;
+      if (!seekDrag && res.video.total > 0)
+        seekEl.value = Math.round(1000 * res.video.pos / res.video.total);
+    } else tpBar.style.display = 'none';
+
+    fillTable('stableTbl', res.stable, [
+      r => ['T' + r.track],
+      r => [r.id === null ? '?' : 'ID' + String(r.id).padStart(2, '0'), r.id === null ? 'bad' : 'ok'],
+      r => [r.bits, 'mono'],
+      r => [r.status + (r.missed ? ` (놓침 ${r.missed})` : ''), r.missed ? 'dim' : ''],
+      r => [`${r.votes}/${r.age}`],
+      r => [r.angle + '°'],
+    ]);
+    fillTable('cardsTbl', res.cards, [
+      r => [r.id === null ? '?' : 'ID' + String(r.id).padStart(2, '0'), r.id === null ? 'bad' : 'ok'],
+      r => [r.bits, 'mono'],
+      r => [r.status],
+      r => [r.score],
+      r => [r.angle + '°'],
+      r => [`(${r.cx}, ${r.cy})`],
+    ]);
+
+    const oscOn = document.getElementById('oscEnable').checked;
+    document.getElementById('oscCard').style.display = oscOn ? '' : 'none';
+    if (oscOn) fillTable('oscTbl', res.osc || [], [
+      r => [r[0], 'mono'], r => [r[1], 'mono'],
+    ]);
+
+    if (poll.syncNext) {
+      syncValues(st.cfg, st.runtime);
+      syncAxes(st.cfg);
+      poll.syncNext = false;
+    }
+  } catch (e) { /* server restarting */ }
+}
+
+async function loadConfigs(notify) {
+  const d = await api('/api/configs');
+  const sel = document.getElementById('cfgSel');
+  sel.innerHTML = '';
+  for (const name of d.configs) {
+    const o = document.createElement('option');
+    o.value = o.textContent = name;
+    sel.appendChild(o);
+  }
+  if (d.active) sel.value = d.active;
+  if (notify) toast(`config ${d.configs.length}개`);
+}
+async function saveCfg() {
+  const name = document.getElementById('cfgName').value.trim();
+  if (!name) return toast('config 이름을 입력하세요');
+  const r = await api('/api/config/save', { name });
+  await loadConfigs();
+  document.getElementById('cfgSel').value = r.name;
+  document.getElementById('cfgName').value = '';
+  toast('저장됨: ' + r.name);
+}
+async function loadCfg() {
+  const name = document.getElementById('cfgSel').value;
+  if (!name) return toast('불러올 config를 선택하세요');
+  await api('/api/config/load', { name });
+  poll.syncNext = true;
+  toast('불러옴: ' + name);
+}
+async function resetCfg() {
+  await api('/api/config/reset', {});
+  poll.syncNext = true;
+  toast('기본값 복원');
+}
+/* ---------- 상황 축 (조합 선택) ---------- */
+function flashKeys(keys) {
+  for (const k of keys) {
+    const el = document.querySelector(`[data-key="${k}"]`);
+    const row = el && el.closest('.opt');
+    if (!row) continue;
+    // 애니메이션 재시작 위해 open 그룹으로 펼치고 클래스 토글
+    const det = row.closest('details');
+    if (det && !det.open) det.open = true;
+    row.classList.remove('flash');
+    void row.offsetWidth;
+    row.classList.add('flash');
+  }
+}
+
+function fmtVal(v) { return v === true ? '켬' : v === false ? '끔' : v; }
+
+function optLabelForKey(key) {
+  const o = schema.options.find(x => x.key === key);
+  return o ? o.label : key;
+}
+
+function buildAxes(cfg) {
+  const host = document.getElementById('axes');
+  host.innerHTML = '';
+  for (const axis of schema.axes) {
+    const row = document.createElement('div');
+    row.className = 'axis';
+    const lab = document.createElement('label');
+    lab.textContent = axis.label;
+    lab.title = axis.help || '';
+    const sel = document.createElement('select');
+    sel.dataset.axis = axis.key;
+    for (const o of axis.options) {
+      const el = document.createElement('option');
+      el.value = o.value; el.textContent = o.label;
+      el.title = Object.entries(o.cfg)
+        .map(([k, v]) => `${optLabelForKey(k)} → ${fmtVal(v)}`).join(', ');
+      sel.appendChild(el);
+    }
+    sel.onchange = () => applyAxis(axis, sel.value);
+    row.appendChild(lab); row.appendChild(sel);
+    host.appendChild(row);
+  }
+}
+
+async function applyAxis(axis, value) {
+  const opt = axis.options.find(o => o.value === value);
+  if (!opt) return;
+  await api('/api/config', opt.cfg);
+  poll.syncNext = true;
+  flashKeys(Object.keys(opt.cfg));
+  const changes = Object.entries(opt.cfg)
+    .map(([k, v]) => `${optLabelForKey(k)}=${fmtVal(v)}`).join(', ');
+  document.getElementById('axisChange').textContent = `▸ ${axis.label}: ${changes}`;
+}
+
+function approxEq(a, b) {
+  if (typeof a === 'number' && typeof b === 'number') return Math.abs(a - b) < 1e-6;
+  return a === b;
+}
+
+function syncAxes(cfg) {
+  for (const axis of schema.axes) {
+    const sel = document.querySelector(`[data-axis="${axis.key}"]`);
+    if (!sel || document.activeElement === sel) continue;
+    const match = axis.options.find(o =>
+      Object.entries(o.cfg).every(([k, v]) => approxEq(cfg[k], v)));
+    // 현재 값과 정확히 일치하는 옵션이 없으면 '수동' 상태로 표시
+    let manual = sel.querySelector('option[value="__manual__"]');
+    if (match) {
+      if (manual) manual.remove();
+      sel.value = match.value;
+      sel.classList.remove('manual');
+    } else {
+      if (!manual) {
+        manual = document.createElement('option');
+        manual.value = '__manual__'; manual.textContent = '— 수동 (혼합)';
+        sel.insertBefore(manual, sel.firstChild);
+      }
+      sel.value = '__manual__';
+      sel.classList.add('manual');
+    }
+  }
+}
+
+/* ---------- 뷰 탭 ---------- */
+function selectView(view) {
+  document.querySelectorAll('#viewTabs button').forEach(x =>
+    x.classList.toggle('active', x.dataset.view === view));
+  document.getElementById('stream').src = '/stream/' + view;
+  // 분할 슬라이더는 '원본 | 전처리' 뷰에서만 의미가 있다
+  document.getElementById('compareRow').style.display =
+    view === 'compare' ? 'flex' : 'none';
+}
+document.getElementById('viewTabs').addEventListener('click', e => {
+  const b = e.target.closest('button');
+  if (b) selectView(b.dataset.view);
+});
+document.getElementById('compareSplit').addEventListener('input', e => {
+  document.getElementById('compareSplitVal').textContent =
+    Math.round(e.target.value * 100) + '%';
+  postOpt('compare_split', +e.target.value);
+});
+
+(async function init() {
+  schema = await api('/api/schema');
+  const st = await api('/api/state');
+  lastCfg = {...st.cfg};
+  lastRuntime = {...st.runtime};
+  buildOptions(st.cfg, st.runtime);
+  const cs = st.runtime.compare_split ?? 0.5;
+  document.getElementById('compareSplit').value = cs;
+  document.getElementById('compareSplitVal').textContent = Math.round(cs * 100) + '%';
+  selectView('compare');
+  buildAxes(st.cfg);
+  syncAxes(st.cfg);
+  loadConfigs();
+  document.getElementById('oscHost').value = st.runtime.osc_host;
+  document.getElementById('oscPort').value = st.runtime.osc_port;
+  document.getElementById('oscPrefix').value = st.runtime.osc_prefix;
+  document.getElementById('oscEnable').checked = !!st.runtime.osc_enabled;
+  document.getElementById('oscFormat').value = st.runtime.osc_format || 'list';
+  renderOscFieldOrder(st.runtime.osc_format || 'list');
+  const tc = st.runtime.tension_connect || 'all';
+  document.getElementById('tensionConnect').value = tc;
+  document.getElementById('tensionKnn').value = st.runtime.tension_knn || 3;
+  const lr = st.runtime.tension_link_radius ?? 0.2;
+  document.getElementById('tensionLinkRadius').value = lr;
+  document.getElementById('tensionLinkRadiusVal').textContent = (+lr).toFixed(2);
+  syncConnectRows(tc);
+  document.getElementById('tensionFold').value = st.runtime.tension_fold || 'max';
+  document.getElementById('showGraph').checked = st.runtime.show_graph !== false;
+  inferOn = true;
+  updateInferBtn();
+  // 현재 서버 소스에 맞춰 드롭다운 표시 (소스 자체는 바꾸지 않음)
+  const src = st.source || 'sim';
+  const mode = src.startsWith('camera') ? 'camera' : src.startsWith('video') ? 'video'
+             : src.startsWith('image') ? 'image' : src === 'objects' ? 'objects' : 'sim';
+  uiMode = mode;
+  document.getElementById('sourceType').value = mode;
+  if (mode === 'sim' && src === 'sim-field')
+    document.getElementById('simSel').value = 'sim-field';
+  showSub(mode);
+  if (mode === 'camera') loadCameras();
+  if (mode === 'video' || mode === 'image') loadMedia();
+  setInterval(poll, 500);
+})();
+</script>
+</body>
+</html>

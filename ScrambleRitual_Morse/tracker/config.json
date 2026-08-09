@@ -1,0 +1,108 @@
+{
+  "morse": {
+    "adaptive_block_px": 0,
+    "adaptive_c": 12,
+    "allow_end_circle": false,
+    "blur_px": 3,
+    "chain_first_gap_ratio_max": 3.0,
+    "chain_gap_ratio_max": 2.4,
+    "chain_neighbors": 12,
+    "chain_perp_tol": 1.4,
+    "circle_min_vertices": 6,
+    "code_count": 20,
+    "compact_aspect_max": 1.85,
+    "correction_distance": 1,
+    "dark_on_light": true,
+    "dash_aspect_min": 1.2,
+    "dash_ratio_min": 1.2,
+    "decode_mode": "codebook",
+    "end_min_circularity": 0.68,
+    "max_glyph_area_frac": 0.055,
+    "max_glyph_area_px": 1000,
+    "min_blob_contrast": 12,
+    "min_glyph_area_frac": 2e-05,
+    "min_glyph_area_px": 2,
+    "min_hamming": 3,
+    "min_rectangularity": 0.38,
+    "min_solidity": 0.22,
+    "morph_close_px": 0,
+    "morph_open_px": 0,
+    "normalize_illumination": false,
+    "normalize_kernel_frac": 0.25,
+    "require_start": false,
+    "shape_classify": false,
+    "shape_templates": [],
+    "slots": 8,
+    "square_area_ratio": 1.8,
+    "square_aspect_max": 1.9,
+    "square_max_vertices": 6,
+    "square_min_extent": 0.5,
+    "star_solidity_max": 0.72,
+    "template_max_dist": 0.35,
+    "threshold": 0,
+    "threshold_clamp": [
+      40,
+      120
+    ],
+    "threshold_mode": "adaptive",
+    "threshold_percentile": 2.0,
+    "triangle_max_vertices": 3
+  },
+  "vision": {
+    "invert": false,
+    "thresh": 150,
+    "blur_px": 3,
+    "morph_open_px": 3,
+    "morph_close_px": 5,
+    "min_area_px": 300,
+    "max_area_frac": 0.6,
+    "max_objects": 4,
+    "contact_gap_px": 6,
+    "contact_min_px": 4
+  },
+  "scene": {
+    "match_dist_px": 80,
+    "max_missed": 8,
+    "pos_alpha": 0.55,
+    "angle_alpha": 0.45
+  },
+  "sound": {
+    "mix": {
+      "disorder": 0.45,
+      "scatter": 0.25,
+      "overlap": 0.3,
+      "chain": 0.2
+    },
+    "grain_ms": [
+      319.0,
+      135.0
+    ],
+    "density_hz": [
+      8.0,
+      80.0
+    ],
+    "spray_ms": [
+      0.0,
+      250.0
+    ],
+    "smooth_alpha": 0.35
+  },
+  "webui": {
+    "proc_max_dim": 1280,
+    "jpeg_quality": 80,
+    "stabilize": true,
+    "stab_window": 12,
+    "stab_min_votes": 3,
+    "stab_max_missed": 10,
+    "osc_enabled": false,
+    "osc_host": "127.0.0.1",
+    "osc_port": 9000,
+    "osc_prefix": "/scramble",
+    "roi": [
+      0.005193842518992294,
+      0.03921650810878848,
+      0.7349830211737112,
+      0.9195596214419911
+    ]
+  }
+}

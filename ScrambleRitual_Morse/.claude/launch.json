@@ -1,0 +1,35 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "tracker-bringup",
+      "runtimeExecutable": ".venv/bin/python",
+      "runtimeArgs": ["-m", "tracker.bringup", "--stage", "1", "--camera", "0", "--expect", "4"],
+      "port": 9000
+    },
+    {
+      "name": "tracker-run-camera",
+      "runtimeExecutable": ".venv/bin/python",
+      "runtimeArgs": ["-m", "tracker.run", "--camera", "0", "--show", "--osc", "127.0.0.1:9000"],
+      "port": 9000
+    },
+    {
+      "name": "tracker-run-synthetic",
+      "runtimeExecutable": ".venv/bin/python",
+      "runtimeArgs": ["-m", "tracker.run", "--seconds", "20", "--show"],
+      "port": 9000
+    },
+    {
+      "name": "tracker-sandbox",
+      "runtimeExecutable": ".venv/bin/python",
+      "runtimeArgs": ["-m", "tracker.sandbox"],
+      "port": 9000
+    },
+    {
+      "name": "conductor-demo",
+      "runtimeExecutable": ".venv/bin/python",
+      "runtimeArgs": ["-m", "conductor.demo", "--seconds", "8"],
+      "port": 0
+    }
+  ]
+}

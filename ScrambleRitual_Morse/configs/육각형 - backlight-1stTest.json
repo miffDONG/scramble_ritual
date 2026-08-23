@@ -86,12 +86,6 @@
     "osc_port": 9000,
     "osc_prefix": "/scramble",
     "osc_format": "list",
-    "roi": [
-      0.005193842518992294,
-      0.03921650810878848,
-      0.7349830211737112,
-      0.9195596214419911
-    ],
     "cam_auto_exposure": true,
     "cam_exposure": -7,
     "cam_powerline": 0,
@@ -100,7 +94,7 @@
     "sim_detect": true,
     "object_side_px": 0.0,
     "tension_contact": 0.06,
-    "tension_connect": "all",
+    "tension_connect": "mst",
     "tension_fold": "max",
     "tension_knn": 3,
     "tension_link_radius": 0.2,

@@ -45,7 +45,8 @@ macOS/Linux: `python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 2026-07-20 현장 테스트(백라이트 패널, 흰색 각인)용 상황 축 조합 포함.
 
 ```bat
-scripts\start.bat                 :: 더블클릭 가능. 시뮬레이션으로 시작
+scripts\start.bat                 :: 더블클릭 가능. 오브제 테이블(사운드)로 시작
+scripts\start.bat --sim           :: 합성 카드 씬으로 시작
 scripts\start.bat --camera 0      :: 카메라 0으로 시작
 scripts\start.bat --video ..\sampleVideo\morseCode.MOV
 ```
@@ -59,7 +60,11 @@ scripts\start.bat --video ..\sampleVideo\morseCode.MOV
 화면 흐름은 위→아래 2단계다 (second-taste/sensing 컨트롤 패널 구성을 이식):
 
 1. **소스** — 상단 **소스 타입** 드롭다운(카메라 / 비디오 / 이미지 /
-   시뮬레이션)에서 고르면, 그 아래에 해당하는 선택 드롭다운이 이어진다.
+   시뮬레이션 / 오브제)에서 고르면, 그 아래에 해당하는 선택 드롭다운이
+   이어진다. **아무 인자 없이 켜면 오브제(사운드)로 시작한다.**
+   - 오브제 (사운드) → 기본 소스. 오브제 20개까지 올라가는 가상 테이블.
+     [+ 오브제 추가] 는 빈 자리에 정육각판을 놓는다. 거리→긴장도·flip·
+     오브제별 주파수를 OSC로 내보내는 사운드 개발용 경로.
    - 카메라 → 장치명 드롭다운(DirectShow 이름). 선택 즉시 연결.
    - 비디오 → `../sampleVideo` 스캔 드롭다운(또는 직접 경로). 선택 즉시
      재생되고 영상 아래 전송 바에서 재생/일시정지·1프레임 스텝·처음부터·
@@ -75,8 +80,10 @@ scripts\start.bat --video ..\sampleVideo\morseCode.MOV
 - **테이블 영역(ROI)**: [테이블 영역 지정] 을 켜고 영상 위를 드래그하면
   그 사각형 안에서만 추론한다. 영역 밖(손, 배경 클러터, 판 밖 파형 각인
   등)은 배경으로 채워져 검출·임계값 계산에서 제외된다. 세 뷰 모두에
-  노란 박스로 표시되고, 영역은 config 프로파일에 저장된다. [영역 지우기]
-  로 해제.
+  노란 박스로 표시되고, [영역 지우기] 로 해제.
+  **항상 "영역 없음"으로 시작하며 저장되지 않는다** — 영역은 카메라 한 대의
+  한 위치에만 맞는 값이라 프로파일에 실어 두면 다른 세팅을 불러올 때 남의
+  사각형이 씌워지고 그 바깥이 통째로 버려진다. 필요할 때 그때그때 지정한다.
 - **추론 정지/시작** (헤더): 파이프라인만 멈추고 스트림은 유지.
 - **상황 축**: 프리셋 대신 독립적인 축(앵커 / 각인 색상 / 조명 / 마크
   감도 / 체인 관용도)을 각각 드롭다운으로 골라 조합한다. 축을 고르면
@@ -84,6 +91,12 @@ scripts\start.bat --video ..\sampleVideo\morseCode.MOV
   (`docs/options.md`). 현장 튜닝 절차는 `docs/recognition-plan.md`.
 - **안정화 ID**: 프레임 간 비트 다수결 투표(`tracker/stability.py`)를
   거친 안정 ID. 한 프레임 오독이 ID를 흔들지 않는다.
+- **OSC 송신 주소 자동 기억**: 호스트/포트/프리픽스는 바꾸는 즉시
+  `tracker/config.json`에 기록돼 재시작해도 그대로다 (저장 버튼과 무관).
+  전에 쓴 주소는 **[최근]** 드롭다운에서 골라 바로 되돌릴 수 있다.
+- **MST 긴장 그래프(기본)**: 인식된 오브제를 노드로 보고 중심거리를 가중치로
+  최소 신장 트리의 `n−1`개 간선을 만든다. 각 `/obj`의 `tension`은 전체 간선의
+  평균이 아니라 해당 오브제에 직접 연결된 간선만 `max/avg/min`으로 결합한다.
 - **OSC 송신**: 안정화 ID를 `/scramble/count`, `/scramble/morse`
   `(id bits x y angle status)`, `/scramble/pair` `(i j dist relTilt)`로
   송신. 호스트/포트/프리픽스 변경 가능, 보낸 메시지는 OSC 모니터 표에

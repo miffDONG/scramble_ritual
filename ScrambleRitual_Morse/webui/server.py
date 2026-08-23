@@ -56,6 +56,7 @@ SIM_TRI_H = 225          # triangle height (~equilateral)
 # the chain (176 px of symbols + the anchor marker) has to fit between.
 SIM_HEX_R = 126
 SIM_BODIES = ("triangle", "hexagon")
+SIM_DEFAULT_BODY = "hexagon"   # what [+ 오브제 추가] drops on the table
 SIM_CHAIN_DY = 50        # chain offset below the centroid (inside, near base)
 # The plate outline must stay BRIGHT: a dark outline survives thresholding and,
 # because findContours is RETR_EXTERNAL, it would enclose (and hide) the marks.
@@ -67,6 +68,24 @@ CONFIGS_DIR = os.path.join(os.path.dirname(__file__), "..", "configs")
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 MEDIA_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "sampleVideo")
 
+# OSC destination — remembered across restarts on its own, see
+# Pipeline.remember_osc_target.
+OSC_TARGET_KEYS = ("osc_host", "osc_port", "osc_prefix")
+OSC_RECENTS_MAX = 8
+
+# Runtime keys that are deliberately NOT persisted. The table region belongs to
+# one camera in one position, not to a tuning profile: carrying it in the file
+# meant loading any profile stamped somebody else's rectangle onto the view and
+# quietly threw away everything outside it. It always starts as "영역 없음"; set
+# it per session by dragging.
+SESSION_ONLY_KEYS = ("roi",)
+
+
+def drop_session_only(webui_cfg):
+    """Saved `webui` block minus the keys that must not outlive a session."""
+    return {k: v for k, v in (webui_cfg or {}).items()
+            if k not in SESSION_ONLY_KEYS}
+
 VIDEO_EXTS = (".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v")
 IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".bmp", ".webp")
 
@@ -77,8 +96,8 @@ CAM_FAIL_LIMIT = 90
 # OSC payload field order. In "list" format these are the positional slots;
 # in "dict" format they are the keys. Shown in the web UI so the receiver
 # never has to guess the order.
-# Per-object tension is folded from this object's distances to the other n-1
-# objects (see object_tension); pairs are no longer sent.
+# Per-object tension is folded from the edges incident to that object in the
+# selected graph (MST by default); pairs are no longer sent.
 OSC_OBJ_FIELDS = ["bits", "x", "y", "tilt", "tension", "flip", "freq"]
 
 
@@ -247,7 +266,46 @@ def object_tension(i, dists, d_near, d_far, connect="all", fold="max", knn=3,
     return round(_fold(tensions, fold), 4)
 
 
-def tension_graph(nodes, long_px, d_near, d_far, connect="all", fold="max",
+def _mst_edges(dist):
+    """Return deterministic Euclidean-MST edges for a distance matrix.
+
+    Kruskal's algorithm is sufficient here (at most 20 objects).  The
+    ``(distance, i, j)`` ordering also makes equal-distance layouts stable and
+    reproducible instead of depending on set/dict iteration order.
+    """
+    n = len(dist)
+    parent = list(range(n))
+    rank = [0] * n
+
+    def find(i):
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    def union(a, b):
+        ra, rb = find(a), find(b)
+        if ra == rb:
+            return False
+        if rank[ra] < rank[rb]:
+            ra, rb = rb, ra
+        parent[rb] = ra
+        if rank[ra] == rank[rb]:
+            rank[ra] += 1
+        return True
+
+    candidates = sorted(
+        (dist[i][j], i, j) for i in range(n) for j in range(i + 1, n))
+    selected = []
+    for _, i, j in candidates:
+        if union(i, j):
+            selected.append((i, j))
+            if len(selected) == n - 1:
+                break
+    return selected
+
+
+def tension_graph(nodes, long_px, d_near, d_far, connect="mst", fold="max",
                   knn=3, link_radius=None):
     """The tension graph the algorithm actually builds — the single source of
     truth for both the OSC per-object value and the overlay visualization.
@@ -258,7 +316,9 @@ def tension_graph(nodes, long_px, d_near, d_far, connect="all", fold="max",
                          node's considered neighbours (so knn's asymmetric
                          links still show as a connection)
         node_tensions  — [float] per node, identical to object_tension()
-    The connect / knn / link_radius filtering mirrors object_tension() exactly.
+    For ``connect=mst``, the graph has exactly n-1 distance-weighted edges and
+    each node tension folds only that node's incident MST edges.  The other
+    connect / knn / link_radius modes mirror object_tension() exactly.
     `link_radius` (near only) defaults to d_far when unset.
     """
     n = len(nodes)
@@ -272,14 +332,21 @@ def tension_graph(nodes, long_px, d_near, d_far, connect="all", fold="max",
             d = math.hypot(nodes[i].cx - nodes[j].cx,
                            nodes[i].cy - nodes[j].cy) / long_px
             dist[i][j] = dist[j][i] = d
-    considered = []
-    for i in range(n):
-        order = sorted((j for j in range(n) if j != i), key=lambda j: dist[i][j])
-        if connect == "near":
-            order = [j for j in order if dist[i][j] < r_near]
-        elif connect == "knn":
-            order = order[:max(1, int(knn))]
-        considered.append(order)
+    if connect == "mst":
+        considered = [[] for _ in range(n)]
+        for i, j in _mst_edges(dist):
+            considered[i].append(j)
+            considered[j].append(i)
+    else:
+        considered = []
+        for i in range(n):
+            order = sorted((j for j in range(n) if j != i),
+                           key=lambda j: dist[i][j])
+            if connect == "near":
+                order = [j for j in order if dist[i][j] < r_near]
+            elif connect == "knn":
+                order = order[:max(1, int(knn))]
+            considered.append(order)
     node_t = []
     for i in range(n):
         ts = [pair_tension(dist[i][j], d_near, d_far) for j in considered[i]]
@@ -507,7 +574,7 @@ class Pipeline(threading.Thread):
         self.lock = threading.Lock()
         self.cfg = cfg_with_defaults(self._load_saved().get("morse"))
         self.runtime = dict(RUNTIME_DEFAULTS)
-        self.runtime.update(self._load_saved().get("webui", {}))
+        self.runtime.update(drop_session_only(self._load_saved().get("webui")))
         self.source_req = source
         self.source_desc = "-"
         self.stab = CardStabilizer()
@@ -569,6 +636,35 @@ class Pipeline(threading.Thread):
                 self.cfg.update(unflatten_cfg(morse_updates))
             self.runtime.update(runtime_updates)
             self._sync_stabilizer()
+        if any(k in OSC_TARGET_KEYS for k in runtime_updates):
+            self.remember_osc_target()
+
+    def remember_osc_target(self):
+        """Push the live OSC target onto the recents list and write it (and
+        only it) straight to tracker/config.json.
+
+        The where-to-send address is venue wiring, not tuning: retyping the
+        sound machine's IP after every restart is pure friction, and it must
+        NOT wait for [config.json 저장] the way the recognition options do —
+        that button would also commit whatever sliders happen to be mid-tweak.
+        So this persists the OSC keys alone, merged into the file on disk."""
+        with self.lock:
+            target = {k: self.runtime[k] for k in OSC_TARGET_KEYS}
+            recents = [t for t in self.runtime.get("osc_recents", [])
+                       if {k: t.get(k) for k in OSC_TARGET_KEYS} != target]
+            recents.insert(0, dict(target))
+            del recents[OSC_RECENTS_MAX:]
+            self.runtime["osc_recents"] = recents
+            keep = dict(target, osc_recents=recents)
+        data = self._load_saved(CFG_PATH)
+        data.setdefault("webui", {}).update(keep)
+        try:
+            os.makedirs(os.path.dirname(os.path.abspath(CFG_PATH)), exist_ok=True)
+            with open(CFG_PATH, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+                f.write("\n")
+        except OSError:
+            pass       # a read-only checkout must not break live sending
 
     def reset_cfg(self):
         with self.lock:
@@ -580,7 +676,7 @@ class Pipeline(threading.Thread):
         data = self._load_saved(keep_extra_from) if keep_extra_from else {}
         with self.lock:
             data["morse"] = {k: self.cfg[k] for k in sorted(self.cfg)}
-            data["webui"] = dict(self.runtime)
+            data["webui"] = drop_session_only(self.runtime)
         os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
         with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
@@ -611,7 +707,7 @@ class Pipeline(threading.Thread):
         with self.lock:
             self.cfg = cfg_with_defaults(data.get("morse"))
             self.runtime = dict(RUNTIME_DEFAULTS)
-            self.runtime.update(data.get("webui", {}))
+            self.runtime.update(drop_session_only(data.get("webui")))
             self._sync_stabilizer()
         if name:  # mirror the loaded profile to the active config.json
             self._write_cfg(CFG_PATH, keep_extra_from=CFG_PATH)
@@ -730,7 +826,7 @@ class Pipeline(threading.Thread):
                 objs.append({"code_id": int(req.get("code_id", len(objs) + 1)),
                              "x": x, "y": y, "tilt": 0.0, "flip": False,
                              "shape": "triangle",
-                             "body": str(req.get("body", "triangle")),
+                             "body": str(req.get("body", SIM_DEFAULT_BODY)),
                              "pitch": None})
             elif action == "clear":
                 objs.clear()
@@ -1195,7 +1291,7 @@ class Pipeline(threading.Thread):
         d_near, d_far, self.tension_basis = tension_thresholds(
             rt, side_px, long_px)
         # tension algorithm knobs (switchable live to compare on stage)
-        t_connect = str(rt.get("tension_connect", "all"))
+        t_connect = str(rt.get("tension_connect", "mst"))
         t_fold = str(rt.get("tension_fold", "max"))
         t_knn = int(rt.get("tension_knn", 3) or 3)
         t_link = float(rt.get("tension_link_radius", 0.2) or 0.2)
@@ -1225,8 +1321,8 @@ class Pipeline(threading.Thread):
             return round(max(0.0, min(1.0, (v - origin) / span)), 4)
 
         # Only ONE message family is sent: the individual object. Each object
-        # carries its own tension, folded from its distances to the other n-1
-        # objects. Objects are identified by their BINARY morse value, which is
+        # carries its own tension, folded from its incident graph edges.
+        # Objects are identified by their BINARY morse value, which is
         # the object's real identity — not a positional index (that would
         # re-order whenever objects pass each other).
 
@@ -1527,15 +1623,21 @@ def main():
     src.add_argument("--camera", type=int)
     src.add_argument("--video")
     src.add_argument("--image")
+    src.add_argument("--sim", action="store_true",
+                     help="start on the synthetic card scene instead")
     args = ap.parse_args()
 
-    source = ("sim", None)
+    # the object table is the day-to-day workspace (sound / OSC), so a bare
+    # scripts\start.bat lands there; --sim still reaches the synthetic cards
+    source = ("objects", None)
     if args.camera is not None:
         source = ("camera", args.camera)
     elif args.video:
         source = ("video", args.video)
     elif args.image:
         source = ("image", args.image)
+    elif args.sim:
+        source = ("sim", None)
 
     pipe = Pipeline(source)
     pipe.seed_configs()

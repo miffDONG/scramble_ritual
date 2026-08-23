@@ -240,9 +240,13 @@ RUNTIME_DEFAULTS = {
     "stab_max_missed": 10,
     # OSC 송신 (웹 UI의 전용 섹션에서 제어; SCHEMA 옵션 패널에는 안 나옴)
     "osc_enabled": False,
+    # 송신 주소는 현장 배선이라 [config.json 저장] 과 무관하게 바뀔 때마다
+    # 바로 tracker/config.json 에 기록된다 (Pipeline.remember_osc_target).
     "osc_host": "127.0.0.1",
     "osc_port": 9000,
     "osc_prefix": "/scramble",
+    # 전에 쓴 송신 주소 목록(최신순). [{osc_host, osc_port, osc_prefix}, ...]
+    "osc_recents": [],
     # OSC 값 표현 방식 (메시지 1개 = 오브제 1개, 주소는 /scramble/obj):
     #  "list" = 위치 기반 리스트. 순서는 OSC_OBJ_FIELDS
     #           /scramble/obj  [10001110, 0.35, 0.45, 30.0, 0.66, 0, -5]
@@ -252,7 +256,8 @@ RUNTIME_DEFAULTS = {
     #           /scramble/obj  ["{\"bits\":\"10001110\",\"x\":0.35,...}"]
     "osc_format": "list",
     # 테이블 영역(ROI): 정규화 [x, y, w, h] (0~1) 또는 None. 이 영역 밖은
-    # 배경으로 채워 검출에서 제외한다. 뷰에서 드래그로 지정, 프로파일에 저장됨.
+    # 배경으로 채워 검출에서 제외한다. 뷰에서 드래그로 지정하며 세션 한정 —
+    # 저장/불러오기에 따라다니지 않는다 (server.SESSION_ONLY_KEYS).
     "roi": None,
     # 카메라 노출 제어 (플리커 대응). 백라이트 깜빡임(한국 50Hz→100Hz)과
     # 셔터가 안 맞으면 가로 밴딩이 생김 → 자동노출 끄고 노출을 10ms 배수로.
@@ -278,9 +283,11 @@ RUNTIME_DEFAULTS = {
     #     한 변의 절반, 직사각이면 긴 변의 절반. 겹쳐도 1 유지(0으로 치환 안 함).
     "object_side_px": 0.0,
     "tension_contact": 0.06,     # (폴백) 크기 미지정 시 쓰는 d_near 정규화 거리
-    # 각 오브제의 tension = 본인 제외 n-1개와의 거리로 계산한 pair_tension 을 fold.
+    # 각 오브제의 tension = 선택 그래프에서 본인에게 직접 연결된 간선들의
+    # pair_tension을 fold. MST는 전체 n-1개 간선을 만들되 노드별 incident
+    # edge만 계산에 참여한다.
     # 무대에서 방식을 바꿔 비교할 수 있도록 런타임 옵션으로 둔다.
-    "tension_connect": "all",    # 연결 노드: all(n-1) | near(반경 이내) | knn
+    "tension_connect": "mst",    # 연결: mst(기본) | all | near | knn
     "tension_fold": "max",       # 결합: max | avg | min
     "tension_knn": 3,            # connect=knn일 때 최근접 개수
     # near의 연결 반경(테이블 긴 변 정규화). d_far(0.5)와 분리 — 작게 둘수록

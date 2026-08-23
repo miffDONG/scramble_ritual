@@ -1,4 +1,8 @@
+import json
+import os
 import unittest
+import unittest.mock
+from types import SimpleNamespace
 
 from tracker.morse import generate_codebook
 from webui import server as S
@@ -104,6 +108,27 @@ class TestTension(unittest.TestCase):
         self.assertEqual(
             S.object_tension(0, [], d_near, d_far, "all", "max"), 0.0)
 
+    def test_mst_has_n_minus_one_edges_and_node_local_tension(self):
+        # The short chain 0--1--2 is the MST; the long 0--2 edge is excluded.
+        nodes = [SimpleNamespace(cx=x, cy=0.0) for x in (0.0, 20.0, 60.0)]
+        edges, tensions = S.tension_graph(
+            nodes, long_px=100.0, d_near=0.1, d_far=0.5,
+            connect="mst", fold="avg")
+        self.assertEqual([(i, j) for i, j, _ in edges], [(0, 1), (1, 2)])
+        self.assertEqual(len(edges), len(nodes) - 1)
+        # edge tensions: 0--1 = .75, 1--2 = .25.  Leaves use one edge;
+        # the middle object's OSC tension averages only its two incident edges.
+        self.assertEqual(tensions, [0.75, 0.5, 0.25])
+
+    def test_mst_default_and_disconnected_singleton(self):
+        nodes = [SimpleNamespace(cx=x, cy=0.0) for x in (0.0, 10.0)]
+        edges, tensions = S.tension_graph(
+            nodes, long_px=100.0, d_near=0.1, d_far=0.5)
+        self.assertEqual(len(edges), 1)
+        self.assertEqual(tensions, [1.0, 1.0])
+        self.assertEqual(S.tension_graph(
+            nodes[:1], 100.0, 0.1, 0.5), ([], [0.0]))
+
     def test_object_freq_id_band_and_override(self):
         cards = S.objects_to_cards([{"code_id": 7, "x": 0.5, "y": 0.5}],
                                    900, 520, BOOK, 8)
@@ -151,6 +176,105 @@ class TestTable(unittest.TestCase):
         self.assertEqual(S._body_outline("nope"), S._body_outline("triangle"))
 
 
+class TestOscTargetMemory(unittest.TestCase):
+    """The send address is remembered on its own, without [config.json 저장]."""
+
+    def setUp(self):
+        import tempfile, threading
+        self.p = S.Pipeline.__new__(S.Pipeline)
+        self.p.lock = threading.Lock()
+        self.p.runtime = {"osc_host": "127.0.0.1", "osc_port": 9000,
+                          "osc_prefix": "/scramble", "osc_recents": []}
+        self.p.cfg = {"threshold_clamp": [40, 120]}
+        self.p._sync_stabilizer = lambda: None
+        self.dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.dir.cleanup)
+        self.path = os.path.join(self.dir.name, "config.json")
+        patch = unittest.mock.patch.object(S, "CFG_PATH", self.path)
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def saved(self):
+        with open(self.path, encoding="utf-8") as f:
+            return json.load(f)["webui"]
+
+    def test_changing_the_target_writes_it_to_disk(self):
+        self.p.update_cfg({"osc_host": "192.168.0.7", "osc_port": 7400,
+                           "osc_prefix": "/ritual"})
+        on_disk = self.saved()
+        self.assertEqual(on_disk["osc_host"], "192.168.0.7")
+        self.assertEqual(on_disk["osc_port"], 7400)
+        self.assertEqual(on_disk["osc_prefix"], "/ritual")
+
+    def test_recents_are_newest_first_deduped_and_capped(self):
+        for port in range(1, S.OSC_RECENTS_MAX + 3):
+            self.p.update_cfg({"osc_port": port})
+        self.p.update_cfg({"osc_port": 3})          # revisit an old one
+        recents = self.p.runtime["osc_recents"]
+        self.assertEqual(len(recents), S.OSC_RECENTS_MAX)   # capped
+        self.assertEqual(recents[0]["osc_port"], 3)         # newest first
+        ports = [t["osc_port"] for t in recents]
+        self.assertEqual(len(ports), len(set(ports)))       # no duplicates
+        self.assertEqual([t["osc_port"] for t in self.saved()["osc_recents"]],
+                         ports)
+
+    def test_tuning_options_are_not_written_out(self):
+        # only the address is auto-saved; recognition options still wait for
+        # the explicit save button
+        self.p.update_cfg({"osc_host": "10.0.0.2", "proc_max_dim": 1920})
+        self.assertNotIn("proc_max_dim", self.saved())
+
+    def test_unrelated_options_alone_write_nothing(self):
+        self.p.update_cfg({"proc_max_dim": 1920})
+        self.assertFalse(os.path.exists(self.path))
+
+
+class TestRoiIsSessionOnly(unittest.TestCase):
+    """The table region always starts empty; it is set by dragging, per
+    session, and never rides along in a saved profile."""
+
+    def setUp(self):
+        import tempfile, threading
+        self.p = S.Pipeline.__new__(S.Pipeline)
+        self.p.lock = threading.Lock()
+        self.p.cfg = {"threshold_clamp": [40, 120], "slots": 8}
+        self.p.runtime = dict(S.RUNTIME_DEFAULTS)
+        self.p.active_name = ""
+        self.p._sync_stabilizer = lambda: None
+        self.p.stab = S.CardStabilizer()
+        self.dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.dir.cleanup)
+        self.path = os.path.join(self.dir.name, "config.json")
+        for target in ("CFG_PATH", "CONFIGS_DIR"):
+            val = self.path if target == "CFG_PATH" else self.dir.name
+            patch = unittest.mock.patch.object(S, target, val)
+            patch.start()
+            self.addCleanup(patch.stop)
+
+    def test_default_is_no_region(self):
+        self.assertIsNone(S.RUNTIME_DEFAULTS["roi"])
+
+    def test_saving_does_not_write_the_region(self):
+        self.p.runtime["roi"] = [0.1, 0.1, 0.5, 0.5]
+        self.p.save_cfg("field")
+        with open(self.path, encoding="utf-8") as f:
+            self.assertNotIn("roi", json.load(f)["webui"])
+
+    def test_loading_a_profile_never_imposes_a_region(self):
+        # a profile written before this change still carries one
+        with open(self.path, "w", encoding="utf-8") as f:
+            json.dump({"webui": {"roi": [0.0, 0.0, 0.7, 0.9], "osc_port": 7000}},
+                      f)
+        self.p.runtime["roi"] = [0.2, 0.2, 0.3, 0.3]
+        self.p.load_cfg()
+        self.assertIsNone(self.p.runtime["roi"])
+        self.assertEqual(self.p.runtime["osc_port"], 7000)  # the rest loads
+
+    def test_it_still_applies_while_the_session_lasts(self):
+        self.p.set_roi([0.1, 0.2, 0.4, 0.5])
+        self.assertEqual(self.p.runtime["roi"], [0.1, 0.2, 0.4, 0.5])
+
+
 class TestObjectCrud(unittest.TestCase):
     def setUp(self):
         self.p = S.Pipeline.__new__(S.Pipeline)  # bare, no thread/config load
@@ -165,11 +289,20 @@ class TestObjectCrud(unittest.TestCase):
         self.assertEqual(len(set(spots)), 20)      # no pile-up on one spot
         self.assertEqual(spots, S.table_slots()[:20])
 
-    def test_body_defaults_to_triangle_and_is_updatable(self):
+    def test_body_defaults_to_the_hexagon_plate_and_is_updatable(self):
         self.p.object_op("add", {})
+        self.assertEqual(self.p._objects()[0]["body"], S.SIM_DEFAULT_BODY)
+        self.assertEqual(S.SIM_DEFAULT_BODY, "hexagon")
+        self.p.object_op("update", {"index": 0, "body": "triangle"})
         self.assertEqual(self.p._objects()[0]["body"], "triangle")
-        self.p.object_op("update", {"index": 0, "body": "hexagon"})
-        self.assertEqual(self.p._objects()[0]["body"], "hexagon")
+
+    def test_objects_saved_before_the_body_field_still_render_as_triangles(self):
+        # sim_objects live in config profiles; an entry with no body key
+        # predates the hexagon and must keep the shape it was drawn with
+        frame = S.render_objects([{"code_id": 1, "x": 0.5, "y": 0.5}], BOOK, 8)
+        tri = S.render_objects([{"code_id": 1, "x": 0.5, "y": 0.5,
+                                 "body": "triangle"}], BOOK, 8)
+        self.assertTrue((frame == tri).all())
 
     def test_add_move_update_remove_clear(self):
         objs = self.p.object_op("add", {"x": 0.2, "y": 0.3, "code_id": 5})

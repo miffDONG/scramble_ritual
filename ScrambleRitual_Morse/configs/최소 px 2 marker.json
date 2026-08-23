@@ -52,7 +52,6 @@
     "osc_enabled": false,
     "osc_host": "127.0.0.1",
     "osc_port": 9000,
-    "osc_prefix": "/scramble",
-    "roi": null
+    "osc_prefix": "/scramble"
   }
 }

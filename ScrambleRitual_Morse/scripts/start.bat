@@ -2,7 +2,8 @@
 REM Scramble Ritual Morse - web tuner launcher (double-click friendly).
 REM Creates .venv and installs requirements on first run, then starts the
 REM live-tuning web UI and opens the browser.
-REM   start.bat                start on the synthetic scene
+REM   start.bat                start on the object table (sound / OSC)
+REM   start.bat --sim          start on the synthetic card scene
 REM   start.bat --camera 0     start on camera 0
 REM   start.bat --video ..\sampleVideo\morseCode.MOV
 setlocal

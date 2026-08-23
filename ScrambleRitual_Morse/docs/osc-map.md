@@ -20,7 +20,7 @@ list 형식 기준 인자 순서(`OSC_OBJ_FIELDS`):
 | 1 | `float x` | 0~1 | **개별 오브제 x** (오브제 판 중심, ROI 폭 정규화) → 패닝 |
 | 2 | `float y` | 0~1 | **개별 오브제 y** (ROI 높이 정규화) |
 | 3 | `float tilt` | −180~180 | **개별 오브제의 기울기**(도). 차이가 아니라 그 오브제 자체의 각도 |
-| 4 | `float tension` | 0~1 | **그 오브제에 걸리는 긴장도** — 본인 제외 n−1개와의 거리로 계산(fold) |
+| 4 | `float tension` | 0~1 | **그 오브제에 걸리는 긴장도** — 기본 MST에서 자신에게 직접 연결된 간선 tension을 fold |
 | 5 | `int flip` | 0/1 | **뒤집힘** → 1이면 역재생 |
 | 6 | `float freq` | −12~12 | **오브제별 주파수**(세미톤). 미지정 시 ID 파생 밴드 |
 
@@ -29,8 +29,9 @@ list 형식 기준 인자 순서(`OSC_OBJ_FIELDS`):
 
 **긴장도(`tension`)**: 중심거리를 **테이블 긴 변**으로 정규화한 값으로 곡선을 계산 —
 멀면(≥ 긴 변의 절반) 0, 변이 닿는 거리(`한 변/√3`)에서 1, 그보다 가까우면(겹침) 1 유지.
-오브제별로 n−1개의 쌍 tension을 `tension_connect`(all/near/knn) · `tension_fold`
-(max/avg/min) 옵션으로 접는다. 상세·곡선·옵션은 `docs/osc-values.md` 참고.
+기본 `tension_connect=mst`는 거리 가중치로 전체 n−1개 간선을 선택하고, 오브제별로
+자신에게 직접 연결된 간선만 `tension_fold`(max/avg/min)로 접는다. 기존
+all/near/knn도 선택할 수 있다. 상세·곡선·옵션은 `docs/osc-values.md` 참고.
 
 > **`/pair`는 더 이상 보내지 않는다.** tension은 위처럼 각 `/obj`에 실린다.
 

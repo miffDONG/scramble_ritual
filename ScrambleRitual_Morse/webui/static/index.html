@@ -369,6 +369,10 @@
         <input type="text" id="oscPrefix" style="width:110px" placeholder="/scramble">
         <button class="btn" onclick="applyOsc()">적용</button>
       </div>
+      <div class="row" id="oscRecentRow" style="display:none">
+        <span style="font-size:12px;color:var(--dim);width:52px">최근</span>
+        <select id="oscRecent" style="flex:1" title="전에 보낸 주소. 고르면 바로 적용됩니다"></select>
+      </div>
       <div class="row">
         <span style="font-size:12px;color:var(--dim);width:52px">형식</span>
         <select id="oscFormat" style="flex:1">
@@ -381,6 +385,7 @@
       <div class="row">
         <span style="font-size:12px;color:var(--dim);width:52px">긴장 연결</span>
         <select id="tensionConnect" style="flex:1">
+          <option value="mst">MST (거리 최소 신장 트리 · 기본)</option>
           <option value="all">전체 (n−1) — 본인 외 모든 오브제</option>
           <option value="near">근접만 (반경 이내) — 먼 것 제외</option>
           <option value="knn">최근접 k개</option>
@@ -404,7 +409,7 @@
         <input type="checkbox" id="showGraph" style="width:18px;height:18px;accent-color:var(--accent)">
         <label for="showGraph">오버레이에 노드 연결(그래프) 표시</label>
       </div>
-      <p class="hint">개별 오브제 <code>/obj</code>만 송신 — 각 오브제가 본인 제외 n−1개와의 거리로 계산한 <code>tension</code>을 포함. 값 정의는 <code>docs/osc-values.md</code></p>
+      <p class="hint">개별 오브제 <code>/obj</code>만 송신 — 기본 MST의 전체 간선은 n−1개이며, 각 오브제는 자신에게 직접 연결된 간선만 결합한 <code>tension</code> 하나를 포함. 값 정의는 <code>docs/osc-values.md</code></p>
     </div>
   </div>
 </main>
@@ -455,11 +460,15 @@ function postOpt(key, value) {
   }
   applyVisibility();   // 종속 컨트롤은 클릭 즉시 나타나고/사라져야 한다
   clearTimeout(postOpt._t);
-  postOpt._t = setTimeout(() => {
-    const batch = {...pending};
-    for (const k in pending) delete pending[k];
-    api('/api/config', batch);
-  }, 150);
+  postOpt._t = setTimeout(flushOpts, 150);
+}
+
+/* 대기 중인 변경을 지금 보낸다. 보낸 결과를 곧바로 읽어야 할 때 await 한다. */
+function flushOpts() {
+  clearTimeout(postOpt._t);
+  const batch = {...pending};
+  for (const k in pending) delete pending[k];
+  return Object.keys(batch).length ? api('/api/config', batch) : Promise.resolve();
 }
 
 /* ---------- 소스 타입 → 하위 선택 ---------- */
@@ -811,14 +820,42 @@ function updateInferBtn() {
 }
 
 /* ---------- OSC ---------- */
-function applyOsc() {
+// The server remembers the address on its own (it writes tracker/config.json
+// as soon as it changes), so applying is all the UI has to do.
+async function applyOsc() {
   postOpt('osc_host', document.getElementById('oscHost').value || '127.0.0.1');
   postOpt('osc_port', +document.getElementById('oscPort').value || 9000);
   postOpt('osc_prefix', document.getElementById('oscPrefix').value || '/scramble');
   postOpt('osc_enabled', document.getElementById('oscEnable').checked);
   toast('OSC 설정 적용');
+  await flushOpts();
+  const st = await api('/api/state');
+  renderOscRecents(st.runtime.osc_recents, st.runtime);
 }
 document.getElementById('oscEnable').addEventListener('change', applyOsc);
+
+function oscLabel(t) {
+  return `${t.osc_host}:${t.osc_port}  ${t.osc_prefix}`;
+}
+function renderOscRecents(list, cur) {
+  const sel = document.getElementById('oscRecent');
+  const rows = (list || []).filter(t => t && t.osc_host);
+  document.getElementById('oscRecentRow').style.display = rows.length > 1 ? '' : 'none';
+  sel.innerHTML = rows.map((t, i) => `<option value="${i}">${oscLabel(t)}</option>`).join('');
+  if (cur) {
+    const at = rows.findIndex(t => oscLabel(t) === oscLabel(cur));
+    if (at >= 0) sel.value = String(at);
+  }
+  sel._rows = rows;
+}
+document.getElementById('oscRecent').addEventListener('change', e => {
+  const t = (e.target._rows || [])[+e.target.value];
+  if (!t) return;
+  document.getElementById('oscHost').value = t.osc_host;
+  document.getElementById('oscPort').value = t.osc_port;
+  document.getElementById('oscPrefix').value = t.osc_prefix;
+  applyOsc();
+});
 function renderOscFieldOrder(fmt) {
   const f = (schema && schema.osc_fields) || {};
   const host = document.getElementById('oscFieldOrder');
@@ -1308,9 +1345,10 @@ document.getElementById('compareSplit').addEventListener('input', e => {
   document.getElementById('oscPort').value = st.runtime.osc_port;
   document.getElementById('oscPrefix').value = st.runtime.osc_prefix;
   document.getElementById('oscEnable').checked = !!st.runtime.osc_enabled;
+  renderOscRecents(st.runtime.osc_recents, st.runtime);
   document.getElementById('oscFormat').value = st.runtime.osc_format || 'list';
   renderOscFieldOrder(st.runtime.osc_format || 'list');
-  const tc = st.runtime.tension_connect || 'all';
+  const tc = st.runtime.tension_connect || 'mst';
   document.getElementById('tensionConnect').value = tc;
   document.getElementById('tensionKnn').value = st.runtime.tension_knn || 3;
   const lr = st.runtime.tension_link_radius ?? 0.2;

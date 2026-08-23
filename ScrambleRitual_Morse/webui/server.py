@@ -29,13 +29,16 @@ from flask import Flask, Response, jsonify, request, send_from_directory
 
 from tracker.morse import (
     DEFAULTS, Glyph, MorseCard, SlotRead, cfg_with_defaults, detect_cards,
-    extraction_maps, find_glyphs, generate_codebook, prepare_gray, preprocess, render_card,
-    render_scene, shape_features,
+    extraction_detail, find_glyphs, generate_codebook, prepare_gray, preprocess,
+    render_card, render_scene, shape_features,
+)
+from tracker.overlay import (
+    draw_card_reads, measure_text_block, overlay_scale, text_block, text_chip,
 )
 from webui.diagnostics import (
     DIAG_CAND_BGR, DIAG_DOT_BGR, DIAG_LINE_BGR, VIEWS, caption,
     compare_wipe, draw_extraction, extraction_summary, glyph_is_line,
-    mask_over_frame, preprocess_chain,
+    mask_over_frame, preprocess_chain, verdict_masks,
 )
 from tracker.stability import CardStabilizer
 
@@ -99,6 +102,10 @@ CAM_FAIL_LIMIT = 90
 # Per-object tension is folded from the edges incident to that object in the
 # selected graph (MST by default); pairs are no longer sent.
 OSC_OBJ_FIELDS = ["bits", "x", "y", "tilt", "tension", "flip", "freq"]
+
+#: above this many objects the overlay readout goes one-line-per-object and
+#: drops the per-link numbers (a full 20-plate table has no room for blocks)
+COMPACT_READOUT_OBJECTS = 8
 
 
 def safe_config_name(name):
@@ -495,6 +502,28 @@ def table_slots():
             for r in range(rows) for q in range(cols)]
 
 
+def object_capacity(code_count):
+    """How many plates the table may hold.
+
+    One per codebook ID — a further plate would have to repeat an ID, and the
+    OSC contract identifies objects BY their morse value, so two plates with
+    the same ID are one object as far as every receiver is concerned. The
+    auto-placement grid caps it too: past the last cell a new plate has no
+    seat of its own and lands on top of another.
+    """
+    return max(1, min(int(code_count), len(table_slots())))
+
+
+def free_code_id(objs, limit):
+    """Lowest codebook ID not already on the table (falls back to the next
+    number when every ID is taken)."""
+    used = {int(o.get("code_id", 0)) for o in objs}
+    for cid in range(1, limit + 1):
+        if cid not in used:
+            return cid
+    return len(objs) + 1
+
+
 def free_table_slot(objs, tol=0.02):
     """First grid cell no object is sitting on, else the table centre."""
     taken = [(float(o.get("x", 0.5)), float(o.get("y", 0.5))) for o in objs]
@@ -817,13 +846,19 @@ class Pipeline(threading.Thread):
         with self.lock:
             objs = self._objects()
             if action == "add":
+                # the table holds one plate per codebook ID and no more; the
+                # caller is told by the count coming back unchanged
+                limit = object_capacity(self.cfg.get("code_count", 20))
+                if len(objs) >= limit:
+                    return list(objs)
                 # no explicit spot -> drop it on the first free table cell.
                 # Stacking every new object on the middle of the table buried
                 # them in one blob that reads as a single (or no) card.
                 px, py = free_table_slot(objs)
                 x = max(0.0, min(1.0, float(req.get("x", px))))
                 y = max(0.0, min(1.0, float(req.get("y", py))))
-                objs.append({"code_id": int(req.get("code_id", len(objs) + 1)),
+                objs.append({"code_id": int(req.get("code_id",
+                                                   free_code_id(objs, limit))),
                              "x": x, "y": y, "tilt": 0.0, "flip": False,
                              "shape": "triangle",
                              "body": str(req.get("body", SIM_DEFAULT_BODY)),
@@ -854,6 +889,11 @@ class Pipeline(threading.Thread):
                             p = req["pitch"]
                             o["pitch"] = None if p is None else float(p)
             return list(objs)
+
+    def object_limit(self):
+        """Plate cap for the current codebook — what the UI shows as n/limit."""
+        with self.lock:
+            return object_capacity(self.cfg.get("code_count", 20))
 
     def _sync_stabilizer(self):
         self.stab.configure({
@@ -1151,13 +1191,22 @@ class Pipeline(threading.Thread):
                 diag_frame[ry:ry2, rx:rx2] = frame[ry:ry2, rx:rx2]
             diag_gray = prepare_gray(diag_frame, dc)
             diag_mask = preprocess(diag_frame, dc, gray=diag_gray)
-            _, line_mask, dot_mask = extraction_maps(diag_mask, dc)
+            detail = extraction_detail(diag_mask, dc)
+            line_mask, dot_mask = detail["line_mask"], detail["dot_mask"]
             # The extraction view must stay live while inference is stopped or
             # a ground-truth sim is running, so fall back to its own blob pass.
             diag_glyphs = glyphs or find_glyphs(diag_mask, dc, gray=diag_gray,
                                                 line_mask=line_mask)
             n_line = sum(1 for g in diag_glyphs if glyph_is_line(g, dc))
             mode, params = extraction_summary(dc)
+            # contour builds no pixel line map, so 선/점 후보 would be a black
+            # screen and the whole mask. Show its per-blob verdicts instead —
+            # the split the decoder will actually use (captioned as such).
+            if mode == "contour":
+                line_view_mask, dot_view_mask = verdict_masks(
+                    diag_mask, diag_glyphs, dc)
+            else:
+                line_view_mask, dot_view_mask = line_mask, dot_mask
 
             vis = draw_overlay(frame, cards, glyphs, stable, fps,
                                infer_on=self.infer_on, graph=self._graph)
@@ -1168,14 +1217,18 @@ class Pipeline(threading.Thread):
             # at the seam instead of across two half-size thumbnails.
             split = float(rt.get("compare_split", 0.5))
             compare_bgr = compare_wipe(frame, enhanced_bgr, split)
+            # The objects sim bypasses preprocessing, so its A/B has nothing to
+            # judge — that screen carries the object readout instead: per object
+            # ID / tilt / flip / tension, and the links tension is folded from.
+            if kind0 == "objects" and self._graph and self._graph[0]:
+                draw_tension_graph(compare_bgr, self._graph)
             mask_bgr = cv2.cvtColor(diag_mask, cv2.COLOR_GRAY2BGR)
             # Derived maps are tinted ONTO the frame: as bare masks they are a
             # black screen in contour mode (no line map) and in morphology
             # (almost no dot residual), which is no feedback at all.
-            line_bgr = mask_over_frame(diag_gray, line_mask, DIAG_LINE_BGR)
-            dot_bgr = mask_over_frame(diag_gray, dot_mask, DIAG_DOT_BGR)
-            extract_bgr = draw_extraction(diag_gray, diag_mask, line_mask,
-                                          dot_mask, diag_glyphs, dc)
+            line_bgr = mask_over_frame(diag_gray, line_view_mask, DIAG_LINE_BGR)
+            dot_bgr = mask_over_frame(diag_gray, dot_view_mask, DIAG_DOT_BGR)
+            extract_bgr = draw_extraction(diag_gray, detail, diag_glyphs, dc)
             if roi_px:  # draw the ROI boundary on every view
                 rx, ry, rx2, ry2 = roi_px
                 for im in (raw_view, enhanced_bgr, mask_bgr, line_bgr,
@@ -1193,20 +1246,50 @@ class Pipeline(threading.Thread):
             else:
                 pp_note = "PREPROCESS OFF"
             pp_color = (110, 235, 130) if chain else (170, 170, 170)
-            compare_bgr = caption(compare_bgr, [
+            compare_lines = [
                 (f"LEFT = original   |   RIGHT = preprocessed"
                  f"   (split {round(split * 100)}%)", (0, 200, 255)),
-                (pp_note, pp_color)])
+                (pp_note, pp_color)]
+            if kind0 == "objects":
+                compare_lines.append(
+                    ("OBJECT READOUT: ID / tilt / flip / tension, links "
+                     "weighted by pair tension", (255, 200, 120)))
+            compare_bgr = caption(compare_bgr, compare_lines)
             enhanced_bgr = caption(enhanced_bgr, [(pp_note, pp_color)])
+            if mode == "contour":
+                # what is painted here is per-blob geometry, not a pixel map;
+                # saying so keeps the view honest about the method
+                line_note = ("contour builds NO pixel line map - shown: blobs "
+                             "whose rotated box reads as a dash")
+                dot_note = ("contour builds NO pixel line map - shown: blobs "
+                            "whose rotated box reads as a dot")
+            elif mode == "hough":
+                line_note = (f"{len(detail['segments'])} Hough segments, drawn "
+                             f"{detail['line_thickness']}px thick, AND-ed with "
+                             f"the candidate mask")
+                dot_note = "candidate mask minus the (dilated) Hough line map"
+            else:
+                line_note = (f"union of 4 directional openings, kernel "
+                             f"{detail['kernel_length']}x"
+                             f"{detail['kernel_thickness']}px")
+                dot_note = "candidate mask minus the (dilated) opening union"
+            if mode != "contour" and cv2.countNonZero(dot_view_mask) == 0:
+                # a line map that claims every pixel reads as "all dashes";
+                # the empty residual is the symptom, so name the cure
+                dot_note += ("   -- EMPTY: the line map claims every pixel"
+                             + ("; raise the Hough vote / minLen"
+                                if mode == "hough"
+                                else "; lengthen the morph kernel"))
             line_bgr = caption(line_bgr, [
                 (f"LINE MAP [{mode}]  {params}", DIAG_LINE_BGR),
-                (f"line pixels = {cv2.countNonZero(line_mask)}"
-                 + ("   (contour builds no line map)"
-                    if mode == "contour" else ""), (200, 200, 200))])
+                (line_note, (200, 200, 200)),
+                (f"line pixels = {cv2.countNonZero(line_view_mask)}",
+                 (200, 200, 200))])
             dot_bgr = caption(dot_bgr, [
-                (f"DOT RESIDUAL [{mode}] = candidate mask minus line map",
-                 DIAG_DOT_BGR),
-                (f"dot pixels = {cv2.countNonZero(dot_mask)}", (200, 200, 200))])
+                (f"DOT RESIDUAL [{mode}]", DIAG_DOT_BGR),
+                (dot_note, (200, 200, 200)),
+                (f"dot pixels = {cv2.countNonZero(dot_view_mask)}",
+                 (200, 200, 200))])
             mask_bgr = caption(mask_bgr, [
                 ("CANDIDATE MASK after threshold + open/close", (200, 200, 200))])
 
@@ -1239,6 +1322,10 @@ class Pipeline(threading.Thread):
                         "dot_px": int(cv2.countNonZero(dot_mask)),
                         "dash": n_line,
                         "dot": len(diag_glyphs) - n_line,
+                        # per-method scale numbers behind the picture
+                        "segments": len(detail["segments"]),
+                        "multi_px": (int(np.count_nonzero(detail["claims"] > 1))
+                                     if detail.get("claims") is not None else 0),
                         "preprocess": chain,
                         "preprocess_active": bool(chain),
                     },
@@ -1299,8 +1386,16 @@ class Pipeline(threading.Thread):
         # the graph = the per-object tension AND the node connections
         edges, node_t = tension_graph(known, long_px, d_near, d_far,
                                       t_connect, t_fold, t_knn, t_link)
-        # stash for draw_overlay (frame-pixel node coords)
-        self._graph = ([(float(s.cx), float(s.cy)) for s in known],
+        # Stash for draw_overlay. The nodes carry the identity the OSC message
+        # carries (ID / tilt / flip / tension / freq), so the overlay shows the
+        # values actually being sent instead of an unlabelled dot.
+        self._graph = ([{"cx": float(s.cx), "cy": float(s.cy),
+                         "id": s.code_id, "bits": s.bits,
+                         "tilt": float(s.angle),
+                         "flip": bool(getattr(s, "flip", False)),
+                         "tension": float(node_t[i]),
+                         "freq": float(self._object_freq(s))}
+                        for i, s in enumerate(known)],
                        edges, node_t) if show_graph else None
 
         if not osc_on:
@@ -1400,26 +1495,123 @@ def stable_json(s):
             "angle": round(s.angle, 1)}
 
 
-def draw_tension_graph(vis, graph):
-    """Draw the tension graph: edges colored/weighted by pair tension, and each
-    node's folded tension. `graph` = (node_xy, edges, node_tensions)."""
-    points, edges, node_t = graph
-    pts = [(int(x), int(y)) for x, y in points]
+def readout_lines(node, compact=False):
+    """The values drawn next to one object, as text lines.
+
+    Both forms carry the same four measurements the sound engine acts on —
+    ID, tilt, flip, tension. The compact form only drops the bit string and
+    the derived frequency, which are the two a crowded table can do without.
+    """
+    ident = f"ID{node['id']:02d}" if node.get("id") is not None else "ID--"
+    tilt = float(node.get("tilt", 0.0))
+    if abs(tilt) < 0.05:
+        tilt = 0.0                      # never print "-0"
+    tension = float(node.get("tension", 0.0))
+    if compact:
+        flip = "F+" if node.get("flip") else "F-"
+        return [f"{ident} {tilt:+.0f}d {flip} T{tension:.2f}"]
+    flip = "flip ON" if node.get("flip") else "flip off"
+    return [f"{ident}  {node.get('bits', '')}",
+            f"tilt {tilt:+.1f}deg  {flip}",
+            f"tension {tension:.2f}   freq {float(node.get('freq', 0.0)):+.1f}"]
+
+
+def _box_overlap(a, b):
+    """Overlapping area of two (x0, y0, x1, y1) boxes."""
+    dx = min(a[2], b[2]) - max(a[0], b[0])
+    dy = min(a[3], b[3]) - max(a[1], b[1])
+    return dx * dy if dx > 0 and dy > 0 else 0
+
+
+def _place_block(vis, lines, anchor, color, scale, taken):
+    """Draw a readout near `anchor`, in whichever of the four diagonal
+    positions collides least with what is already on the frame.
+
+    A full 20-object table puts plates ~1.5 plate-widths apart, so a readout
+    pinned to one side of its node lands on the neighbour's. Trying the four
+    corners first keeps the values attached to the right object instead of
+    shrinking the text until nothing is readable.
+    """
+    x, y = anchor
+    bw, bh = measure_text_block(lines, scale)
+    pad = int(round(10 * scale))
+    best, best_cost = None, None
+    # four corners first, then the same corners pushed a block further out —
+    # on a busy frame the near ring is often taken by a neighbour's label
+    for ring in (1.0, 2.4):
+        for to_left in (False, True):
+            for below in (True, False):
+                ox = x + int(round((-pad if to_left else pad) * ring))
+                oy = (y + int(round(pad * ring)) if below
+                      else y - bh - int(round(pad * ring)))
+                x0 = ox - bw if to_left else ox
+                cand = (x0 - 5, oy, x0 + bw - 5, oy + bh)
+                cost = sum(_box_overlap(cand, t) for t in taken)
+                if best_cost is None or cost < best_cost:
+                    best, best_cost = (ox, oy, to_left), cost
+                if best_cost == 0:
+                    break
+            if best_cost == 0:
+                break
+        if best_cost == 0:
+            break
+    ox, oy, to_left = best
+    box = text_block(vis, lines, (ox, oy), color, scale, to_left=to_left)
+    taken.append(box)
+    return box
+
+
+def draw_tension_graph(vis, graph, scale=None, taken=None):
+    """Draw the object graph: every considered link between objects, weighted
+    and coloured by its pair tension, and per object the values that leave over
+    OSC — ID, tilt, flip and the folded tension.
+
+    `graph` = (nodes, edges, node_tensions) as stashed by _send_osc; each node
+    is a dict with cx/cy/id/bits/tilt/flip/tension/freq. The measured numbers
+    are drawn next to the object they belong to: an unlabelled dot cannot be
+    checked against what the sound engine receives.
+
+    `taken` is a list of boxes already drawn on this frame (the card layer's
+    chips); each readout is placed to collide least with them and with the
+    readouts placed before it.
+
+    On a crowded table the readout drops to one line per object and the
+    per-link numbers go away — link colour and thickness still carry the pair
+    tension, and every object still shows its own. Three-line blocks for 20
+    plates would bury the plates they describe.
+    """
+    nodes, edges, node_t = graph
+    s = overlay_scale(vis.shape) if scale is None else scale
+    compact = len(nodes) > COMPACT_READOUT_OBJECTS
+    pts = [(int(round(n["cx"])), int(round(n["cy"]))) for n in nodes]
+    # `taken` may arrive already holding the card layer's label boxes, so the
+    # object readout does not land on the ID chip of the card it describes
+    taken = [] if taken is None else taken
     for i, j, t in edges:
         if t <= 0.001:                 # far / inactive: faint thin link
             cv2.line(vis, pts[i], pts[j], (70, 70, 70), 1, cv2.LINE_AA)
             continue
         col = tension_color(t)
-        cv2.line(vis, pts[i], pts[j], col, 1 + int(round(2 * t)), cv2.LINE_AA)
-        if t >= 0.1:                    # label the taut edges at their midpoint
+        cv2.line(vis, pts[i], pts[j], col,
+                 max(1, int(round((1 + 2 * t) * s))), cv2.LINE_AA)
+        if t >= 0.1 and not compact:    # label the taut links at their midpoint
             mx, my = (pts[i][0] + pts[j][0]) // 2, (pts[i][1] + pts[j][1]) // 2
-            cv2.putText(vis, f"{t:.2f}", (mx - 12, my - 4),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, col, 1, cv2.LINE_AA)
-    for (x, y), t in zip(pts, node_t):  # node = folded tension
+            # nudged off the link's own line, where the node readouts sit
+            ex, ey = pts[j][0] - pts[i][0], pts[j][1] - pts[i][1]
+            elen = max(math.hypot(ex, ey), 1e-6)
+            nudge = 14 * s
+            taken.append(text_chip(
+                vis, f"T {t:.2f}",
+                (mx - int(round(16 * s)) - ey / elen * nudge,
+                 my + ex / elen * nudge), col, 0.85 * s))
+    for (x, y), node in zip(pts, nodes):
+        t = float(node.get("tension", 0.0))
         col = tension_color(t)
-        cv2.circle(vis, (x, y), 5, col, -1, cv2.LINE_AA)
-        cv2.putText(vis, f"{t:.2f}", (x + 9, y - 9),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, col, 1, cv2.LINE_AA)
+        cv2.circle(vis, (x, y), max(4, int(round(5 * s))), col, -1, cv2.LINE_AA)
+        cv2.circle(vis, (x, y), max(6, int(round(9 * s))), col,
+                   max(1, int(round(s))), cv2.LINE_AA)
+        _place_block(vis, readout_lines(node, compact), (x, y), col,
+                     0.9 * s, taken)
     return vis
 
 
@@ -1440,35 +1632,35 @@ def draw_overlay(frame, cards, glyphs, stable, fps, infer_on=True, graph=None):
                     "pentagon": (255, 120, 0), "hexagon": (200, 0, 200),
                     "star": (0, 140, 255)}
     anchor_shapes = ("square", "triangle", "pentagon", "hexagon", "star")
+    s = overlay_scale(vis.shape)
+    # a full table is 20 chains on one frame: text that is fine for 3 objects
+    # covers the marks it describes at 20, so the labels thin out with density
+    spacious = len(cards) <= COMPACT_READOUT_OBJECTS
     for g in glyphs:
         col = shape_colors.get(g.shape) or colors.get(g.kind, (110,) * 3)
         cv2.drawContours(vis, [g.contour], -1, col, 1)
-        if g.shape in anchor_shapes:  # label the anchors
+        if spacious and g.shape in anchor_shapes:   # label the anchors
             cv2.putText(vis, g.shape, (int(g.cx) - 12, int(g.cy) - 11),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.4, col, 1, cv2.LINE_AA)
-    for card in cards:
-        ok = card.code_id is not None
-        color = (0, 230, 0) if ok else (0, 0, 255)
-        cv2.line(vis, (int(card.start.cx), int(card.start.cy)),
-                 (int(card.end.cx), int(card.end.cy)), color, 2, cv2.LINE_AA)
-        for slot in card.slots:
-            cv2.putText(vis, slot.bit, (int(slot.cx) - 4, int(slot.cy) - 8),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.35, color, 1, cv2.LINE_AA)
-        shape = f"[{card.start.shape}]" if card.start.shape else ""
-        cv2.putText(vis, f"{card.label}{shape} {card.bits} {card.status}",
-                    (int(card.cx) - 80, int(card.cy) - 22),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1, cv2.LINE_AA)
-    for s in stable:
-        color = (255, 200, 0) if s.code_id is not None else (0, 120, 255)
-        cv2.circle(vis, (int(s.cx), int(s.cy)), 14, color, 2, cv2.LINE_AA)
-        cv2.putText(vis, f"T{s.track_id}:{s.label}",
-                    (int(s.cx) - 30, int(s.cy) + 32),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1, cv2.LINE_AA)
+    # which blobs became one ID, and what each was read as. Per-slot tags are
+    # dropped on a crowded table for the same reason the object readout goes
+    # compact there: 20 chains' worth of `index:bit` buries the chains.
+    labels = []                 # boxes both layers must stay clear of
+    draw_card_reads(vis, cards, scale=s, slot_tags=spacious, taken=labels)
+    for st in stable:
+        color = (255, 200, 0) if st.code_id is not None else (0, 120, 255)
+        cv2.circle(vis, (int(st.cx), int(st.cy)), int(round(14 * s)), color,
+                   max(1, int(round(2 * s))), cv2.LINE_AA)
+        cv2.putText(vis, f"T{st.track_id}:{st.label}",
+                    (int(st.cx) - int(round(30 * s)),
+                     int(st.cy) + int(round(32 * s))),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5 * s, color,
+                    max(1, int(round(s))), cv2.LINE_AA)
     if graph and graph[0]:
-        draw_tension_graph(vis, graph)
+        draw_tension_graph(vis, graph, scale=s, taken=labels)
     hud = f"fps={fps:4.1f} cards={len(cards)} stable={len(stable)}"
-    cv2.putText(vis, hud, (10, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.6,
-                (255, 255, 255), 2, cv2.LINE_AA)
+    # on a chip: white-on-white is unreadable over a backlit plate or the sim
+    text_chip(vis, hud, (10, 24), (255, 255, 255), s)
     return vis
 
 
@@ -1515,6 +1707,7 @@ def make_app(pipe):
                         "templates": pipe.template_labels(),
                         "cam_status": pipe.cam_status,
                         "objects": runtime.get("sim_objects", []),
+                        "object_limit": pipe.object_limit(),
                         "tension_basis": getattr(pipe, "tension_basis", "")})
 
     @app.post("/api/config")
@@ -1587,7 +1780,8 @@ def make_app(pipe):
     def object_op():
         body = request.get_json(force=True) or {}
         objs = pipe.object_op(body.get("action", ""), body)
-        return jsonify({"ok": True, "objects": objs})
+        return jsonify({"ok": True, "objects": objs,
+                        "limit": pipe.object_limit()})
 
     @app.get("/api/cameras")
     def cameras():

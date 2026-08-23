@@ -313,9 +313,9 @@
       <div class="sub" id="subObjects" style="display:none">
         <label class="flabel">오브제 시뮬 (소리 개발 · OSC 송신)</label>
         <div class="row">
-          <button class="btn primary" onclick="addObject()">+ 오브제 추가</button>
+          <button class="btn primary" id="objAddBtn" onclick="addObject()">+ 오브제 추가</button>
           <button class="btn" onclick="clearObjects()">모두 삭제</button>
-          <span class="badge info" id="objBadge">오브제 0</span>
+          <span class="badge info" id="objBadge">오브제 0/20</span>
         </div>
         <div class="row">
           <span style="font-size:12px;color:var(--dim);width:64px">자동 회전</span>
@@ -328,7 +328,7 @@
                  style="width:18px;height:18px;accent-color:var(--accent)">
           <label for="simDetect" style="font-size:13px">실제 추론 사용 (끄면 그라운드 트루스)</label>
         </div>
-        <p class="hint">테이블에는 코드북 전체인 <b>오브제 20개</b>가 올라간다. [+ 오브제 추가] 는 빈 자리에 차례로 놓는다. 영상 위에서 오브제를 <b>드래그로 이동</b>, <b>클릭하면</b> 회전/뒤집기/ID/형태(세모판·정육각판)/마커/피치 편집. 검출 없이 그라운드 트루스로 <b>거리→긴장도·flip→역재생·오브제별 주파수</b>를 OSC로 송신(아래 OSC 송신 켜기).</p>
+        <p class="hint">테이블에는 코드북 전체인 <b>오브제 20개</b>가 올라간다. [+ 오브제 추가] 는 빈 자리에 <b>비어 있는 가장 작은 ID</b>로 놓고, <b>20개가 차면 더 추가되지 않는다</b>(같은 ID 두 장은 OSC 수신 쪽에서 한 오브제다). 영상 위에서 오브제를 <b>드래그로 이동</b>, <b>클릭하면</b> 회전/뒤집기/ID/형태(세모판·정육각판)/마커/피치 편집. 검출 없이 그라운드 트루스로 <b>거리→긴장도·flip→역재생·오브제별 주파수</b>를 OSC로 송신(아래 OSC 송신 켜기).</p>
       </div>
     </div>
 
@@ -653,20 +653,46 @@ let objDrag = null;
 const objLayer = document.getElementById('objLayer');
 const objPopup = document.getElementById('objPopup');
 
+let objLimit = 20;
+
 async function addObject() {
-  // no x/y: the server drops it on the first free table cell, so a full set
-  // of 20 spreads out instead of piling up on one spot
-  const r = await api('/api/object', { action: 'add',
-                                       code_id: (objState.length % 20) + 1 });
-  objState = r.objects; toast('오브제 추가 (총 ' + objState.length + ')');
+  // no x/y and no code_id: the server drops it on the first free table cell
+  // with the lowest unused codebook ID, so a full set spreads out and no two
+  // plates share an ID
+  const before = objState.length;
+  const r = await api('/api/object', { action: 'add' });
+  objState = r.objects;
+  if (r.limit) objLimit = r.limit;
+  updateObjBadge();
+  if (objState.length === before)
+    toast('테이블 정원(' + objLimit + '개)이 찼습니다');
+  else
+    toast('오브제 추가 (총 ' + objState.length + '/' + objLimit + ')');
+}
+
+function updateObjBadge() {
+  const b = document.getElementById('objBadge');
+  if (b) {
+    b.textContent = '오브제 ' + objState.length + '/' + objLimit;
+    b.className = 'badge ' + (objState.length >= objLimit ? 'ok' : 'info');
+  }
+  const add = document.getElementById('objAddBtn');
+  if (add) {
+    const full = objState.length >= objLimit;
+    add.disabled = full;
+    add.title = full ? '코드북 ID 수만큼(' + objLimit + '개) 모두 올라갔습니다'
+                     : '빈 자리에 오브제를 하나 추가';
+  }
 }
 async function clearObjects() {
   const r = await api('/api/object', { action: 'clear' });
-  objState = r.objects; objPopup.style.display = 'none'; toast('오브제 모두 삭제');
+  objState = r.objects; objPopup.style.display = 'none';
+  updateObjBadge(); toast('오브제 모두 삭제');
 }
 async function removeObject(idx) {
   const r = await api('/api/object', { action: 'remove', index: idx });
   objState = r.objects; objPopup.style.display = 'none';
+  updateObjBadge();
 }
 async function objUpdate(idx, fields) {
   // Apply edits optimistically so tilt/flip feedback is visible immediately,
@@ -1116,8 +1142,12 @@ async function poll() {
       document.getElementById('chipMethod').textContent =
         `추출 [${ex.mode}] ${ex.params}`;
       const vd = document.getElementById('chipVerdict');
-      vd.textContent = `판정 선 ${ex.dash} / 점 ${ex.dot}`
-        + (ex.mode === 'contour' ? '' : ` (선 ${ex.line_px}px)`);
+      // 방식마다 그 방식이 실제로 만든 양을 함께 보여준다
+      let detail = '';
+      if (ex.mode === 'hough') detail = ` (선분 ${ex.segments}개 / ${ex.line_px}px)`;
+      else if (ex.mode === 'morphology')
+        detail = ` (선 ${ex.line_px}px, 2방향+ ${ex.multi_px}px)`;
+      vd.textContent = `판정 선 ${ex.dash} / 점 ${ex.dot}` + detail;
       vd.className = ex.dash || ex.dot ? 'badge ok' : 'badge';
     }
     if (inferOn !== res.infer) { inferOn = res.infer; updateInferBtn(); }
@@ -1142,8 +1172,8 @@ async function poll() {
     if (st.source === 'objects') {
       objLayer.classList.add('active');
       objState = st.objects || [];
-      const b = document.getElementById('objBadge');
-      if (b) b.textContent = '오브제 ' + objState.length;
+      if (st.object_limit) objLimit = st.object_limit;
+      updateObjBadge();
       renderObjHandles();
     } else {
       objLayer.classList.remove('active');

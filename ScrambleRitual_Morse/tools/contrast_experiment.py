@@ -22,6 +22,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from tracker.morse import detect_cards, generate_codebook
+from tracker.overlay import draw_card_reads, draw_read_summary
 
 
 METHODS = (
@@ -160,47 +161,16 @@ def run_project_decoder(gray: np.ndarray, project_cfg: dict):
 
 
 def decoder_overlay(frame, cards, glyphs, roi) -> np.ndarray:
+    """Sheet image: every candidate blob, plus the shared card-read layer
+    (tracker.overlay) so this tool and the live tuner show the same picture."""
     vis = frame.copy()
-    tint = vis.copy()
     if roi:
         cv2.rectangle(vis, roi[:2], roi[2:], (255, 180, 0), 2)
     for g in glyphs:
         x, y, w, h = g.bbox
         cv2.rectangle(vis, (x, y), (x + w, y + h), (80, 80, 80), 1)
-    palette = [(0, 230, 255), (255, 80, 220), (70, 240, 70),
-               (255, 170, 40), (60, 100, 255)]
-    for card_i, card in enumerate(cards):
-        color = palette[card_i % len(palette)]
-        pts = [(round(s.cx), round(s.cy)) for s in card.slots]
-        if len(pts) >= 2:
-            hull_pts = []
-            for slot in card.slots:
-                x, y, w, h = slot.glyph.bbox
-                pad = 5
-                hull_pts.extend([(x - pad, y - pad), (x + w + pad, y - pad),
-                                 (x + w + pad, y + h + pad), (x - pad, y + h + pad)])
-            hull = cv2.convexHull(np.array(hull_pts, np.int32))
-            cv2.fillConvexPoly(tint, hull, color)
-            cv2.polylines(vis, [np.array(pts, np.int32)], False, color, 3,
-                          cv2.LINE_AA)
-        for slot in card.slots:
-            x, y, w, h = slot.glyph.bbox
-            cv2.rectangle(vis, (x, y), (x + w, y + h), color, 2)
-            cv2.circle(vis, (round(slot.cx), round(slot.cy)), 4, color, -1,
-                       cv2.LINE_AA)
-            tag = f"{slot.index + 1}:{slot.bit}"
-            tag_y = max(13, y - 5)
-            cv2.putText(vis, tag, (x, tag_y), cv2.FONT_HERSHEY_SIMPLEX,
-                        .42, (0, 0, 0), 3, cv2.LINE_AA)
-            cv2.putText(vis, tag, (x, tag_y), cv2.FONT_HERSHEY_SIMPLEX,
-                        .42, color, 1, cv2.LINE_AA)
-        label = f"ID={card.code_id or '?'} bits={card.bits} {card.status} s={card.score:.2f}"
-        org = (max(8, round(card.cx) - 100), max(28, round(card.cy) - 24))
-        cv2.putText(vis, label, org, cv2.FONT_HERSHEY_SIMPLEX, .58,
-                    (0, 0, 0), 4, cv2.LINE_AA)
-        cv2.putText(vis, label, org, cv2.FONT_HERSHEY_SIMPLEX, .58,
-                    color, 2, cv2.LINE_AA)
-    return cv2.addWeighted(tint, 0.14, vis, 0.86, 0)
+    draw_card_reads(vis, cards)
+    return draw_read_summary(vis, cards)
 
 
 def label_panel(image: np.ndarray, label: str) -> np.ndarray:

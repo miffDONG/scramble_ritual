@@ -23,6 +23,9 @@ import numpy as np
 
 from .granular import FragmentBank, GranularEngine
 from .morse import detect_cards, generate_codebook, render_scene
+from .overlay import (
+    draw_card_reads, draw_read_summary, overlay_scale, text_chip,
+)
 from .sound import SoundMapper
 
 CFG_PATH = os.path.join(os.path.dirname(__file__), "config.json")
@@ -366,24 +369,16 @@ def draw_overlay(frame, cards, glyphs, params, table):
     for g in glyphs:
         cv2.drawContours(vis, [g.contour], -1, colors.get(g.kind, (100, 100, 100)), 1)
 
-    for card in cards:
-        ok = card.code_id is not None
-        color = (0, 230, 0) if ok else (0, 0, 255)
-        cv2.line(vis, (int(card.start.cx), int(card.start.cy)),
-                 (int(card.end.cx), int(card.end.cy)), color, 2, cv2.LINE_AA)
-        for slot in card.slots:
-            scol = (0, 220, 0) if slot.bit != "?" else (0, 0, 255)
-            cv2.circle(vis, (int(slot.cx), int(slot.cy)), 5, scol, 1, cv2.LINE_AA)
-            cv2.putText(vis, slot.bit, (int(slot.cx) - 4, int(slot.cy) - 8),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.35, scol, 1, cv2.LINE_AA)
-        text = f"{card.label}->{table.label_for(card.code_id)} {card.bits} {card.status}"
-        cv2.putText(vis, text, (int(card.cx) - 90, int(card.cy) - 22),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1, cv2.LINE_AA)
+    # the shared card layer: which blobs became one ID, what each was read as,
+    # and (via note_fn) the sound fragment that ID selects
+    draw_card_reads(vis, cards,
+                    note_fn=lambda c: f"-> {table.label_for(c.code_id)}")
+    draw_read_summary(vis, cards)
 
     hud = (f"morse={len(cards)} x={params['scramble']:.2f} "
            f"grain={params['grain_ms']:.0f}ms dens={params['density_hz']:.0f}Hz")
-    cv2.putText(vis, hud, (10, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.6,
-                (255, 255, 255), 2, cv2.LINE_AA)
+    # on a chip: white-on-white is unreadable over the bright sim plate
+    text_chip(vis, hud, (10, 24), (255, 255, 255), overlay_scale(vis.shape))
     return vis
 
 

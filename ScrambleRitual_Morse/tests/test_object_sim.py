@@ -4,7 +4,7 @@ import unittest
 import unittest.mock
 from types import SimpleNamespace
 
-from tracker.morse import generate_codebook
+from tracker.morse import cfg_with_defaults, generate_codebook
 from webui import server as S
 
 
@@ -281,6 +281,9 @@ class TestObjectCrud(unittest.TestCase):
         import threading
         self.p.lock = threading.Lock()
         self.p.runtime = {"sim_objects": []}
+        # the plate cap comes from the codebook size, so the bare fixture
+        # still needs a config
+        self.p.cfg = cfg_with_defaults(None)
 
     def test_add_without_coords_fills_the_grid(self):
         for _ in range(20):
@@ -327,3 +330,52 @@ class TestObjectCrud(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestObjectCap(unittest.TestCase):
+    """The table holds one plate per codebook ID and no more: a further plate
+    would repeat an ID, and OSC receivers identify objects BY their ID."""
+
+    def setUp(self):
+        self.p = S.Pipeline.__new__(S.Pipeline)
+        import threading
+        self.p.lock = threading.Lock()
+        self.p.runtime = {"sim_objects": []}
+        self.p.cfg = cfg_with_defaults(None)
+
+    def test_adding_stops_at_the_codebook_size(self):
+        for _ in range(30):
+            self.p.object_op("add", {})
+        self.assertEqual(len(self.p._objects()), 20)
+        self.assertEqual(self.p.object_limit(), 20)
+
+    def test_every_plate_gets_its_own_id(self):
+        for _ in range(20):
+            self.p.object_op("add", {})
+        ids = [o["code_id"] for o in self.p._objects()]
+        self.assertEqual(sorted(ids), list(range(1, 21)))
+
+    def test_a_freed_id_is_reused_before_the_next_number(self):
+        for _ in range(20):
+            self.p.object_op("add", {})
+        self.p.object_op("remove", {"index": 4})       # frees ID 5
+        self.p.object_op("add", {})
+        self.assertEqual(self.p._objects()[-1]["code_id"], 5)
+        self.assertEqual(len(self.p._objects()), 20)
+
+    def test_removing_makes_room_again(self):
+        for _ in range(25):
+            self.p.object_op("add", {})
+        self.p.object_op("remove", {"index": 0})
+        self.assertEqual(len(self.p._objects()), 19)
+        self.p.object_op("add", {})
+        self.assertEqual(len(self.p._objects()), 20)
+
+    def test_the_cap_follows_the_codebook_and_the_table_grid(self):
+        self.p.cfg = cfg_with_defaults({"code_count": 6})
+        self.assertEqual(self.p.object_limit(), 6)
+        for _ in range(10):
+            self.p.object_op("add", {})
+        self.assertEqual(len(self.p._objects()), 6)
+        # never more plates than the auto-placement grid has cells
+        self.assertEqual(S.object_capacity(999), len(S.table_slots()))

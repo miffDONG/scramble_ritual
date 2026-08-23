@@ -274,51 +274,97 @@ def prepare_gray(frame, cfg=None):
     return gray
 
 
-def extraction_maps(mask, cfg=None):
-    """Return (candidate_mask, line_mask, dot_mask) for visual diagnosis.
+#: morphology probes the mask with a line kernel at these four angles
+MORPH_ANGLES = (0, 45, 90, 135)
 
-    candidate_mask remains the original threshold result so tiny components
-    are never silently discarded.  The two derived masks influence dot/dash
-    classification and are exposed by the web tuner for pixel-level review.
+
+def morph_line_kernel(angle_deg, length, thickness):
+    """One directional line kernel — the exact structuring element the
+    morphology method opens the mask with. The diagnostics view draws this
+    same array, so the picture shows the real kernel, not a redrawn guess."""
+    k = np.zeros((length, length), np.uint8)
+    mid = radius = length // 2
+    a = math.radians(angle_deg)
+    dx, dy = round(math.cos(a) * radius), round(math.sin(a) * radius)
+    cv2.line(k, (mid - dx, mid - dy), (mid + dx, mid + dy), 1,
+             thickness, cv2.LINE_8)
+    return k
+
+
+def extraction_detail(mask, cfg=None):
+    """Everything the chosen extraction method produced — not just its masks.
+
+    The three methods reach the same line/dot split by very different means,
+    and a method can only be judged by what it actually did to THIS frame:
+    which segments Hough voted for, which of the four morphology orientations
+    fired, or — for contour — that no pixel line map exists at all and the
+    split happens per blob. Those intermediates used to be discarded inside
+    this function, so every method ended up shown as the same rasterized
+    union and switching methods changed nothing visible. They are kept here:
+
+        mode          chosen method
+        mask          candidate mask (unchanged threshold result)
+        line_mask     pixels the method calls LINE
+        dot_mask      candidate minus (dilated) line map
+        segments      [(x1, y1, x2, y2), ...] Hough voted for — hough only
+        edges         the Canny image Hough voted on, or None
+        orientations  {angle_deg: opened_mask} — morphology only
+        kernels       {angle_deg: kernel}      — morphology only
     """
     c = cfg_with_defaults(cfg)
     mode = c.get("extraction_mode", "contour")
     line_mask = np.zeros_like(mask)
+    detail = {"mode": mode, "mask": mask, "segments": [], "edges": None,
+              "orientations": {}, "kernels": {}, "line_thickness": 0,
+              "kernel_length": 0, "kernel_thickness": 0}
+
     if mode == "hough":
         edges = cv2.Canny(mask, 50, 150, apertureSize=3)
+        detail["edges"] = edges
         lines = cv2.HoughLinesP(
             edges, 1, np.pi / 180.0,
             threshold=max(1, int(c.get("hough_threshold", 10))),
             minLineLength=max(2, int(c.get("hough_min_line_length", 6))),
             maxLineGap=max(0, int(c.get("hough_max_line_gap", 3))))
+        thick = max(1, int(c.get("hough_line_thickness", 3)))
+        detail["line_thickness"] = thick
         if lines is not None:
-            thick = max(1, int(c.get("hough_line_thickness", 3)))
             for x1, y1, x2, y2 in np.asarray(lines).reshape(-1, 4):
+                detail["segments"].append((int(x1), int(y1), int(x2), int(y2)))
                 cv2.line(line_mask, (x1, y1), (x2, y2), 255, thick,
                          cv2.LINE_AA)
             line_mask = cv2.bitwise_and(line_mask, mask)
     elif mode == "morphology":
         length = max(3, int(c.get("morph_line_length", 9)))
         thick = max(1, int(c.get("morph_line_thickness", 1)))
+        detail["kernel_length"], detail["kernel_thickness"] = length, thick
         # Four orientations make the operation rotation-tolerant while still
         # rejecting compact dots. Kernels are intentionally small for the
         # installation's low-pixel glyphs.
-        kernels = []
-        for angle in (0, 45, 90, 135):
-            k = np.zeros((length, length), np.uint8)
-            mid = length // 2
-            radius = length // 2
-            a = math.radians(angle)
-            dx, dy = round(math.cos(a) * radius), round(math.sin(a) * radius)
-            cv2.line(k, (mid - dx, mid - dy), (mid + dx, mid + dy), 1,
-                     thick, cv2.LINE_8)
-            kernels.append(k)
-        for kernel in kernels:
+        for angle in MORPH_ANGLES:
+            kernel = morph_line_kernel(angle, length, thick)
             opened = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+            detail["kernels"][angle] = kernel
+            detail["orientations"][angle] = opened
             line_mask = cv2.bitwise_or(line_mask, opened)
+
     dot_mask = cv2.subtract(mask, cv2.dilate(
         line_mask, np.ones((3, 3), np.uint8)))
-    return mask, line_mask, dot_mask
+    detail["line_mask"], detail["dot_mask"] = line_mask, dot_mask
+    return detail
+
+
+def extraction_maps(mask, cfg=None):
+    """Return (candidate_mask, line_mask, dot_mask) for visual diagnosis.
+
+    candidate_mask remains the original threshold result so tiny components
+    are never silently discarded.  The two derived masks influence dot/dash
+    classification and are exposed by the web tuner for pixel-level review.
+    extraction_detail() carries the same masks plus the method's own
+    intermediates (Hough segments / morphology orientations).
+    """
+    d = extraction_detail(mask, cfg)
+    return d["mask"], d["line_mask"], d["dot_mask"]
 
 
 def preprocess(frame, cfg=None, gray=None):

@@ -13,13 +13,13 @@ import numpy as np
 import pytest
 
 from tracker.morse import (
-    Glyph, cfg_with_defaults, extraction_maps, find_glyphs, prepare_gray,
-    preprocess, classify_slot, render_scene,
+    Glyph, cfg_with_defaults, extraction_detail, extraction_maps, find_glyphs,
+    prepare_gray, preprocess, classify_slot, render_scene,
 )
 from webui.diagnostics import (
     DIAG_DOT_BGR, DIAG_LINE_BGR, VIEWS, caption, compare_wipe, dim_base,
     draw_extraction, extraction_summary, glyph_is_line, mask_over_frame,
-    preprocess_chain,
+    preprocess_chain, verdict_masks,
 )
 from webui.schema import RUNTIME_DEFAULTS, SCHEMA
 
@@ -37,9 +37,9 @@ def stages(mode, **over):
     frame = scene()
     gray = prepare_gray(frame, cfg)
     mask = preprocess(frame, cfg, gray=gray)
-    _, line_mask, dot_mask = extraction_maps(mask, cfg)
-    glyphs = find_glyphs(mask, cfg, gray=gray, line_mask=line_mask)
-    return frame, gray, mask, line_mask, dot_mask, glyphs, cfg
+    detail = extraction_detail(mask, cfg)
+    glyphs = find_glyphs(mask, cfg, gray=gray, line_mask=detail["line_mask"])
+    return frame, gray, mask, detail, glyphs, cfg
 
 
 def spread(img):
@@ -48,11 +48,20 @@ def spread(img):
     return float(np.std(img.astype(np.float32)))
 
 
+def line_dot_views(mode, gray, mask, detail, glyphs, cfg):
+    """The 선 후보 / 점 후보 masks the server serves for this method: the
+    pixel maps, or — for contour, which builds none — the per-blob verdicts."""
+    if mode == "contour":
+        return verdict_masks(mask, glyphs, cfg)
+    return detail["line_mask"], detail["dot_mask"]
+
+
 @pytest.mark.parametrize("mode", MODES)
 def test_every_diagnostic_view_shows_the_frame_not_a_blank(mode):
-    frame, gray, mask, line_mask, dot_mask, glyphs, cfg = stages(mode)
+    frame, gray, mask, detail, glyphs, cfg = stages(mode)
+    line_mask, dot_mask = line_dot_views(mode, gray, mask, detail, glyphs, cfg)
     views = {
-        "extract": draw_extraction(gray, mask, line_mask, dot_mask, glyphs, cfg),
+        "extract": draw_extraction(gray, detail, glyphs, cfg),
         "lines": mask_over_frame(gray, line_mask, DIAG_LINE_BGR),
         "dots": mask_over_frame(gray, dot_mask, DIAG_DOT_BGR),
     }
@@ -62,12 +71,35 @@ def test_every_diagnostic_view_shows_the_frame_not_a_blank(mode):
         assert spread(view) > 5.0, f"{name} in {mode} mode is effectively blank"
 
 
+def test_contour_line_and_dot_views_carry_its_verdicts():
+    """contour builds no pixel line map, so its 선 후보 tab was empty by
+    construction. Its per-blob verdicts fill both views instead — and they
+    must agree with the decoder, blob for blob."""
+    frame, gray, mask, detail, glyphs, cfg = stages("contour")
+    line_mask, dot_mask = verdict_masks(mask, glyphs, cfg)
+    assert cv2.countNonZero(line_mask) > 0
+    assert cv2.countNonZero(dot_mask) > 0
+    for g in glyphs:
+        painted = line_mask if glyph_is_line(g, cfg) else dot_mask
+        assert painted[int(g.cy), int(g.cx)] == 255
+
+
+@pytest.mark.parametrize("mode", ["hough", "morphology"])
+def test_line_map_methods_fill_the_line_view(mode):
+    """A method that DOES build a pixel map must put pixels in it. Its dot
+    residual is allowed to run empty — a kernel/vote that claims every pixel
+    is exactly the mis-tuning the view is there to expose (the caption says
+    so, and the per-blob bars show every score pinned above the threshold)."""
+    frame, gray, mask, detail, glyphs, cfg = stages(mode)
+    assert cv2.countNonZero(detail["line_mask"]) > 0
+
+
 @pytest.mark.parametrize("mode", MODES)
 def test_extraction_view_differs_per_method(mode):
     """Choosing a different method must change what you SEE."""
-    args = stages(mode)
-    view = draw_extraction(args[1], args[2], args[3], args[4], args[5], args[6])
-    base = dim_base(args[1])
+    frame, gray, mask, detail, glyphs, cfg = stages(mode)
+    view = draw_extraction(gray, detail, glyphs, cfg)
+    base = dim_base(gray)
     assert view.shape[0] > base.shape[0]        # caption strip is appended
     tinted = view[:base.shape[0]]
     assert not np.array_equal(tinted, base)     # something was drawn on it
@@ -76,12 +108,43 @@ def test_extraction_view_differs_per_method(mode):
 def test_extraction_views_are_not_all_identical():
     rendered = []
     for mode in MODES:
-        f, gray, mask, lm, dm, glyphs, cfg = stages(mode)
-        rendered.append(draw_extraction(gray, mask, lm, dm, glyphs, cfg))
+        f, gray, mask, detail, glyphs, cfg = stages(mode)
+        rendered.append(draw_extraction(gray, detail, glyphs, cfg))
     for a in range(len(rendered)):
         for b in range(a + 1, len(rendered)):
             assert not np.array_equal(rendered[a], rendered[b]), \
                 f"{MODES[a]} and {MODES[b]} render identically"
+
+
+def test_each_method_draws_its_own_mechanism_not_just_the_union():
+    """The regression this whole module exists for, one level deeper: two
+    methods that produce a similar union must still LOOK different, because
+    each draws its own intermediates (segments / orientations / boxes)."""
+    f, gray, mask, hough, glyphs, cfg = stages("hough")
+    assert hough["segments"], "hough found no segments to draw"
+    assert hough["edges"] is not None
+
+    f, gray, mask, morph, glyphs2, cfg2 = stages("morphology")
+    assert set(morph["orientations"]) == {0, 45, 90, 135}
+    assert set(morph["kernels"]) == {0, 45, 90, 135}
+    # the four orientations must not be one identical mask repeated, or the
+    # per-direction colouring would be a lie
+    masks = [morph["orientations"][a].tobytes() for a in (0, 45, 90, 135)]
+    assert len(set(masks)) > 1
+
+    f, gray, mask, contour, glyphs3, cfg3 = stages("contour")
+    assert contour["segments"] == [] and contour["orientations"] == {}
+    assert cv2.countNonZero(contour["line_mask"]) == 0   # builds no line map
+
+
+def test_extraction_maps_still_matches_extraction_detail():
+    """The detector's hot path and the diagnostics must not drift apart."""
+    for mode in MODES:
+        f, gray, mask, detail, glyphs, cfg = stages(mode)
+        cand, line_mask, dot_mask = extraction_maps(mask, cfg)
+        assert np.array_equal(cand, detail["mask"])
+        assert np.array_equal(line_mask, detail["line_mask"])
+        assert np.array_equal(dot_mask, detail["dot_mask"])
 
 
 def test_compare_wipe_endpoints_are_a_full_ab():
@@ -110,7 +173,7 @@ def test_caption_adds_a_strip_below_and_never_covers_the_image():
 def test_glyph_verdict_matches_the_decoder(mode):
     """The dash/dot colour in the view must be the bit the decoder would emit,
     otherwise the picture teaches the wrong lesson."""
-    _, _, _, _, _, glyphs, cfg = stages(mode)
+    _, _, _, _, glyphs, cfg = stages(mode)
     assert glyphs
     u, v = (1.0, 0.0), (0.0, 1.0)
     for g in glyphs:

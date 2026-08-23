@@ -18,6 +18,10 @@ import json
 import os
 import time
 
+# .camera must be imported before cv2 (it sets an OpenCV videoio env switch
+# that is only read while the library loads) — see tracker/camera.py.
+from .camera import open_camera
+
 import cv2
 
 from . import synthetic
@@ -38,13 +42,13 @@ def load_cfg():
 def open_source(args):
     """프레임 제너레이터와 소스 설명을 돌려준다."""
     if args.camera is not None:
-        cap = cv2.VideoCapture(args.camera)
-        if cap.isOpened():
-            return lambda t: cap.read()[1], f"camera:{args.camera}"
-        cap.release()
-        # 카메라 미인증/부재 — 죽지 말고 합성 씬으로 폴백 (preview 서버가 살아 있도록).
-        # 실카메라는 시스템 설정 > 개인정보 보호 및 보안 > 카메라 에서 실행 앱 허용 후 사용.
-        print(f"[경고] 카메라 {args.camera}를 열 수 없음 (권한/부재) — 합성 씬으로 폴백")
+        try:
+            cap, backend = open_camera(args.camera)
+            return lambda t: cap.read()[1], f"camera:{args.camera}({backend})"
+        except RuntimeError as exc:
+            # 카메라 미인증/부재/프레임 없음 — 죽지 말고 합성 씬으로 폴백
+            # (preview 서버가 살아 있도록).
+            print(f"[경고] {exc} — 합성 씬으로 폴백")
     if args.video:
         cap = cv2.VideoCapture(args.video)
         if not cap.isOpened():

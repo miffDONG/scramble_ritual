@@ -34,9 +34,12 @@
   .card h2 .step { display: inline-block; width: 20px; height: 20px; line-height: 20px;
     text-align: center; border-radius: 50%; background: var(--accent); color: #101216;
     font-size: 12px; margin-right: 7px; }
-  .viewbox { position: relative; height: 58vh; display: flex; align-items: center;
-    justify-content: center; background: #000; border-radius: 8px; overflow: hidden; }
-  .viewbox img { max-height: 100%; max-width: 100%; width: auto; height: auto;
+  /* the stage hugs the frame instead of framing it: a 58vh letterbox left the
+     table floating in black bars, so the image never used the column width */
+  .viewbox { position: relative; display: flex; align-items: center;
+    justify-content: center; background: #000; border-radius: 8px;
+    overflow: hidden; width: fit-content; max-width: 100%; margin: 0 auto; }
+  .viewbox img { max-height: 72vh; max-width: 100%; width: auto; height: auto;
     display: block; }
   #roiLayer { position: absolute; inset: 0; cursor: crosshair; display: none; z-index: 3; }
   /* while a ROI/template/calibrate drag is active it must sit ABOVE the
@@ -325,7 +328,7 @@
                  style="width:18px;height:18px;accent-color:var(--accent)">
           <label for="simDetect" style="font-size:13px">실제 추론 사용 (끄면 그라운드 트루스)</label>
         </div>
-        <p class="hint">영상 위에서 오브제를 <b>드래그로 이동</b>, <b>클릭하면</b> 회전/뒤집기/ID/모양/피치 편집. 검출 없이 그라운드 트루스로 <b>거리→긴장도·flip→역재생·오브제별 주파수</b>를 OSC로 송신(아래 OSC 송신 켜기).</p>
+        <p class="hint">테이블에는 코드북 전체인 <b>오브제 20개</b>가 올라간다. [+ 오브제 추가] 는 빈 자리에 차례로 놓는다. 영상 위에서 오브제를 <b>드래그로 이동</b>, <b>클릭하면</b> 회전/뒤집기/ID/형태(세모판·정육각판)/마커/피치 편집. 검출 없이 그라운드 트루스로 <b>거리→긴장도·flip→역재생·오브제별 주파수</b>를 OSC로 송신(아래 OSC 송신 켜기).</p>
       </div>
     </div>
 
@@ -642,7 +645,9 @@ const objLayer = document.getElementById('objLayer');
 const objPopup = document.getElementById('objPopup');
 
 async function addObject() {
-  const r = await api('/api/object', { action: 'add', x: 0.5, y: 0.5,
+  // no x/y: the server drops it on the first free table cell, so a full set
+  // of 20 spreads out instead of piling up on one spot
+  const r = await api('/api/object', { action: 'add',
                                        code_id: (objState.length % 20) + 1 });
   objState = r.objects; toast('오브제 추가 (총 ' + objState.length + ')');
 }
@@ -761,11 +766,13 @@ function openObjPopup(idx) {
     `<div class="prow"><label>ID</label><input type="number" id="pID" min="1" max="20" value="${o.code_id}"></div>
      <div class="prow"><label>기울기</label><input type="range" id="pTilt" min="-180" max="180" step="1" value="${o.tilt}"><input type="number" id="pTiltN" min="-180" max="180" step="1" value="${Math.round(o.tilt)}" style="flex:0 0 54px;width:54px"></div>
      <div class="prow"><label></label><button class="btn" style="flex:1;padding:2px 6px" onclick="nudgeTilt(${idx},-15)">−15°</button><button class="btn" style="flex:1;padding:2px 6px" onclick="nudgeTilt(${idx},15)">+15°</button><button class="btn" style="flex:1;padding:2px 6px" onclick="setTilt(${idx},0)">0°</button></div>
-     <div class="prow"><label>모양</label><select id="pShape"><option value="triangle">세모</option><option value="square">네모</option><option value="pentagon">오각형</option><option value="hexagon">육각형</option><option value="star">별</option></select></div>
+     <div class="prow"><label>형태</label><select id="pBody"><option value="triangle">세모판</option><option value="hexagon">정육각판</option></select></div>
+     <div class="prow"><label>마커</label><select id="pShape"><option value="triangle">세모</option><option value="square">네모</option><option value="pentagon">오각형</option><option value="hexagon">육각형</option><option value="star">별</option></select></div>
      <div class="prow"><label>피치</label><input type="range" id="pPitch" min="-12" max="12" value="${o.pitch ?? 0}"><span id="pPitchV">${o.pitch ?? 0}</span></div>
      <div class="prow"><label>반전</label><input type="checkbox" id="pFlip" ${o.flip ? 'checked' : ''}><button class="btn ${o.flip ? 'primary' : ''}" id="pFlipButton" style="flex:1" onclick="toggleFlip(${idx})">Flip ${o.flip ? 'ON' : 'OFF'}</button></div>
      <div class="hint" style="margin:0 0 6px 64px">물리 오브제를 상하로 뒤집은 상태 · 모스 띠가 반대편으로 이동 · OSC <code>flip</code>: OFF=0, ON=1</div>
      <div class="prow"><button class="btn" onclick="objPopup.style.display='none'">닫기</button><button class="btn danger" onclick="removeObject(${idx})">삭제</button></div>`;
+  document.getElementById('pBody').value = o.body || 'triangle';
   document.getElementById('pShape').value = o.shape || 'triangle';
   document.getElementById('pID').onchange = e => objUpdate(idx, { code_id: +e.target.value });
   const tSlider = document.getElementById('pTilt'), tNum = document.getElementById('pTiltN');
@@ -773,6 +780,7 @@ function openObjPopup(idx) {
   tNum.onchange = e => {                 // 숫자 직접 입력으로 정확한 각도 지정
     let v = Math.max(-180, Math.min(180, Math.round(+e.target.value || 0)));
     e.target.value = v; tSlider.value = v; objUpdate(idx, { tilt: v }); };
+  document.getElementById('pBody').onchange = e => objUpdate(idx, { body: e.target.value });
   document.getElementById('pShape').onchange = e => objUpdate(idx, { shape: e.target.value });
   document.getElementById('pPitch').oninput = e => {
     document.getElementById('pPitchV').textContent = e.target.value;

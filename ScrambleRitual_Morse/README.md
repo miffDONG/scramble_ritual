@@ -95,6 +95,30 @@ scripts\start.bat --video ..\sampleVideo\morseCode.MOV
   재시작에 그대로 적용된다. **[기본값 복원]** 은 파일이 아니라 코드
   기본값으로 되돌린다.
 
+### 카메라가 안 잡힐 때 (Windows)
+
+OpenCV의 Windows 기본 백엔드인 MSMF는 장치를 "열기"까지는 성공해 놓고
+프레임은 하나도 주지 않는 경우가 있다. 이때 콘솔에 다음이 반복된다:
+
+```
+[ WARN] global cap_msmf.cpp CvCapture_MSMF::grabFrame videoio(MSMF):
+        can't grab frame. Error: -2147483638
+```
+
+`-2147483638` = `0x8000000A`("데이터가 아직 준비되지 않음"). Elgato 캡처
+장치와 일부 노트북 내장캠에서 재현된다. 그래서 `tracker/camera.py`가
+**DirectShow → MSMF → 기본** 순으로 열어 보고, `isOpened()` 가 아니라
+**실제 프레임이 나오는 백엔드**만 채택한다. 어떤 백엔드로 붙었는지는
+소스 표시줄에 `camera:2(dshow)` 처럼 나온다.
+
+그래도 안 되면 대개 **다른 앱이 장치를 점유**한 것이다:
+
+- **Elgato Camera Hub**를 종료하거나, Facecam 대신 Camera Hub가 만들어
+  주는 **Elgato Virtual Camera** 장치를 고른다 (Hub의 보정을 그대로 탄다).
+- Windows 카메라 앱 / 화상회의 앱을 닫는다.
+- 설정 > 개인 정보 및 보안 > 카메라 에서 "데스크톱 앱이 카메라에
+  액세스하도록 허용"을 켠다.
+
 ## Quick Start
 
 ```bash
@@ -211,6 +235,9 @@ Edit `tracker/config.json`:
 - `morse.chain_perp_tol`, `morse.chain_gap_ratio_max`,
   `morse.chain_first_gap_ratio_max`: chain straightness and spacing
   gates; widen when handwriting gets looser.
+- `morse.max_cards`: default `20`, the table's capacity. Cards past this
+  many are dropped from the frame (lowest chain score first), so raise it
+  with the number of objects the table actually holds.
 - `morse.dash_ratio_min`: along/across projection ratio separating dash
   from dot.
 

@@ -1,0 +1,80 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900">
+  <defs>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="9" stdDeviation="12" flood-color="#000" flood-opacity=".14"/>
+    </filter>
+    <style>
+      .title{font:600 27px Arial,sans-serif;letter-spacing:2px;fill:#343b3d}
+      .sub{font:18px Arial,sans-serif;fill:#687174}
+      .note{font:16px Arial,sans-serif;fill:#687174}
+      .hex{fill:#eef1f1;fill-opacity:.42;stroke:#f8fbfb;stroke-width:4;filter:url(#shadow)}
+      .edge{fill:none;stroke:#bcc4c5;stroke-width:2}
+      .wave{fill:#f8fafa;stroke:#f8fafa;stroke-width:2;stroke-linejoin:round}
+      .zero{fill:none;stroke:#9da7a9;stroke-width:3}
+      .one{fill:#9da7a9}
+      .guide{fill:none;stroke:#9da7a9;stroke-width:1.5;stroke-dasharray:7 6}
+      .dim{font:15px Arial,sans-serif;fill:#778083}
+    </style>
+  </defs>
+  <rect width="1600" height="900" fill="#d8dcdd"/>
+  <text x="800" y="65" text-anchor="middle" class="title">HEXAGON EDGE CODE — TWO LAYOUT OPTIONS</text>
+  <text x="800" y="98" text-anchor="middle" class="sub">waveform first · binary code second</text>
+
+  <!-- OPTION A: 8 bits = 2 per lower edge + 1 at each lower corner -->
+  <g transform="translate(400 450)">
+    <text x="0" y="-310" text-anchor="middle" class="title">A · 8 CELLS</text>
+    <text x="0" y="-280" text-anchor="middle" class="sub">2 per edge + 1 per lower corner</text>
+    <polygon class="hex" points="-260,-150 0,-300 260,-150 260,150 0,300 -260,150"/>
+    <polygon class="edge" points="-260,-150 0,-300 260,-150 260,150 0,300 -260,150"/>
+    <path class="wave" d="M-190 2 L-168 -3 -155 7 -143 -12 -130 18 -116 -24 -104 33 -92 -48 -80 64 -68 -75 -56 92 -44 -114 -32 136 -20 -91 -8 66 4 -52 16 38 28 -27 40 19 54 -14 68 10 84 -7 102 5 122 -3 146 2 190 0 146 -2 122 3 102 -5 84 7 68 -10 54 14 40 -19 28 27 16 -38 4 52 -8 -66 -20 91 -32 -136 -44 114 -56 -92 -68 75 -80 -64 -92 48 -104 -33 -116 24 -130 -18 -143 12 -155 -7 -168 3 Z"/>
+
+    <!-- lower-left edge: bits 0,1 -->
+    <g transform="translate(-188 168) rotate(30)"><rect class="zero" x="-12" y="-7" width="24" height="14" rx="7"/></g>
+    <g transform="translate(-118 208) rotate(30)"><rect class="one" x="-12" y="-7" width="24" height="14" rx="7"/></g>
+    <!-- bottom edge: bits 0,1 -->
+    <g transform="translate(-48 263)"><rect class="zero" x="-12" y="-7" width="24" height="14" rx="7"/></g>
+    <g transform="translate(48 263)"><rect class="one" x="-12" y="-7" width="24" height="14" rx="7"/></g>
+    <!-- lower-right edge: bits 1,0 -->
+    <g transform="translate(118 208) rotate(-30)"><rect class="one" x="-12" y="-7" width="24" height="14" rx="7"/></g>
+    <g transform="translate(188 168) rotate(-30)"><rect class="zero" x="-12" y="-7" width="24" height="14" rx="7"/></g>
+    <!-- two lower corner bits: 1,0 -->
+    <circle class="one" cx="-239" cy="148" r="9"/>
+    <circle class="zero" cx="239" cy="148" r="9"/>
+
+    <path class="guide" d="M-265 335 H265"/>
+    <text x="0" y="365" text-anchor="middle" class="dim">6 edge cells + 2 corner cells = 8 bits</text>
+  </g>
+
+  <!-- OPTION B: 9 bits = 3 per lower edge -->
+  <g transform="translate(1200 450)">
+    <text x="0" y="-310" text-anchor="middle" class="title">B · 9 CELLS</text>
+    <text x="0" y="-280" text-anchor="middle" class="sub">3 cells on each lower edge</text>
+    <polygon class="hex" points="-260,-150 0,-300 260,-150 260,150 0,300 -260,150"/>
+    <polygon class="edge" points="-260,-150 0,-300 260,-150 260,150 0,300 -260,150"/>
+    <path class="wave" d="M-190 2 L-168 -3 -155 7 -143 -12 -130 18 -116 -24 -104 33 -92 -48 -80 64 -68 -75 -56 92 -44 -114 -32 136 -20 -91 -8 66 4 -52 16 38 28 -27 40 19 54 -14 68 10 84 -7 102 5 122 -3 146 2 190 0 146 -2 122 3 102 -5 84 7 68 -10 54 14 40 -19 28 27 16 -38 4 52 -8 -66 -20 91 -32 -136 -44 114 -56 -92 -68 75 -80 -64 -92 48 -104 -33 -116 24 -130 -18 -143 12 -155 -7 -168 3 Z"/>
+
+    <!-- lower-left: 0,1,0 -->
+    <g transform="translate(-216 160) rotate(30)"><rect class="zero" x="-12" y="-7" width="24" height="14" rx="7"/></g>
+    <g transform="translate(-164 190) rotate(30)"><rect class="one" x="-12" y="-7" width="24" height="14" rx="7"/></g>
+    <g transform="translate(-112 220) rotate(30)"><rect class="zero" x="-12" y="-7" width="24" height="14" rx="7"/></g>
+    <!-- bottom: 1,1,0 -->
+    <g transform="translate(-72 263)"><rect class="one" x="-12" y="-7" width="24" height="14" rx="7"/></g>
+    <g transform="translate(0 263)"><rect class="one" x="-12" y="-7" width="24" height="14" rx="7"/></g>
+    <g transform="translate(72 263)"><rect class="zero" x="-12" y="-7" width="24" height="14" rx="7"/></g>
+    <!-- lower-right: 1,0,1 -->
+    <g transform="translate(112 220) rotate(-30)"><rect class="one" x="-12" y="-7" width="24" height="14" rx="7"/></g>
+    <g transform="translate(164 190) rotate(-30)"><rect class="zero" x="-12" y="-7" width="24" height="14" rx="7"/></g>
+    <g transform="translate(216 160) rotate(-30)"><rect class="one" x="-12" y="-7" width="24" height="14" rx="7"/></g>
+
+    <path class="guide" d="M-265 335 H265"/>
+    <text x="0" y="365" text-anchor="middle" class="dim">3 × 3 edge cells = 9 bits</text>
+  </g>
+
+  <g transform="translate(800 842)">
+    <rect class="zero" x="-245" y="-12" width="28" height="16" rx="8"/>
+    <text x="-205" y="2" class="note">0 · outline</text>
+    <rect class="one" x="-50" y="-12" width="28" height="16" rx="8"/>
+    <text x="-10" y="2" class="note">1 · filled</text>
+    <text x="150" y="2" class="note">recommended mark: 5 × 10 mm · minimum stroke: 3 mm</text>
+  </g>
+</svg>

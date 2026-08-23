@@ -110,6 +110,7 @@ DEFAULTS = {
     "chain_gap_ratio_max": 2.4,   # max gap / median gap (splits collinear cards)
     "chain_first_gap_ratio_max": 3.0,
     "chain_neighbors": 12,        # direction hypotheses per square
+    "max_cards": 20,              # max cards read per frame (table capacity)
     "allow_end_circle": False,    # legacy end-circle consumption hook
     "end_min_circularity": 0.68,
 }
@@ -615,68 +616,79 @@ def _best_chain(square, pool, c):
     return best
 
 
-def _collect_line_inliers(origin, pool, u, perp_tol):
-    """Two-sided collinear glyphs about origin along u (includes origin)."""
-    v = (-u[1], u[0])
-    inl = []
-    for g in pool:
-        px, py = g.cx - origin.cx, g.cy - origin.cy
-        along = px * u[0] + py * u[1]
-        across = px * v[0] + py * v[1]
-        if abs(across) <= perp_tol:
-            inl.append((along, across, g))
-    inl.sort(key=lambda item: item[0])
-    return inl
+def _anchorless_candidates(pool, c):
+    """Every plausible straight run of exactly cfg['slots'] collinear glyphs
+    with NO start anchor (the start-marker requirement is turned off), scored.
 
-
-def _best_chain_anchorless(pool, c):
-    """Best straight run of exactly cfg['slots'] collinear glyphs with NO
-    start anchor (the start-marker requirement is turned off). Reading
-    orientation is fixed by convention (increasing x, or increasing y when
-    the chain is near-vertical) so the read is stable across frames.
-    Returns (score, chain_glyphs, u) or None."""
+    Enumerated ONCE per frame. Re-searching the whole pool after peeling off
+    each card is O(cards x pool^2) and stalls the pipeline on a full table
+    (20 objects = ~180 glyphs took ~33 s/frame); the caller instead peels
+    non-overlapping runs off this list, exactly like the anchored path.
+    Reading orientation is fixed by convention (increasing x, or increasing y
+    when the chain is near-vertical) so the read is stable across frames."""
     slots = int(c["slots"])
     if len(pool) < slots:
-        return None
-    areas = [g.area for g in pool]
+        return []
+    xs = np.array([g.cx for g in pool], np.float64)
+    ys = np.array([g.cy for g in pool], np.float64)
+    areas = np.array([g.area for g in pool], np.float64)
     perp_tol = c["chain_perp_tol"] * math.sqrt(max(float(np.median(areas)), 1.0))
-    best = None
-    for a in pool:
-        neigh = sorted(pool, key=lambda g: (g.cx - a.cx) ** 2 + (g.cy - a.cy) ** 2)
-        for seed in neigh[1:int(c["chain_neighbors"]) + 1]:
-            dx, dy = seed.cx - a.cx, seed.cy - a.cy
-            dist = math.hypot(dx, dy)
+    gap_max = c["chain_gap_ratio_max"]
+    k = int(c["chain_neighbors"])
+    best = {}                      # frozenset(glyph indices) -> (score, chain, u)
+    seen = set()                   # collinear bands already expanded
+    for i in range(len(pool)):
+        dx, dy = xs - xs[i], ys - ys[i]
+        d2 = dx * dx + dy * dy
+        for j in np.argsort(d2)[1:k + 1]:
+            dist = math.sqrt(float(d2[j]))
             if dist < 1e-6:
                 continue
-            u = (dx / dist, dy / dist)
-            inl = _collect_line_inliers(a, pool, u, perp_tol)
-            if len(inl) < slots:
+            u = (float(dx[j]) / dist, float(dy[j]) / dist)
+            # collect the band around the seed line, refit the axis through
+            # it, then re-collect about the band's own centroid. Measuring the
+            # second band from the centroid instead of this origin glyph makes
+            # the result identical for every origin on the same line, so the
+            # `seen` set collapses the ~slots duplicate hypotheses each chain
+            # would otherwise generate.
+            idx = np.nonzero(np.abs(-dx * u[1] + dy * u[0]) <= perp_tol)[0]
+            if idx.size < slots:
                 continue
-            u = _fit_direction([(g.cx, g.cy) for _, _, g in inl], u)
-            inl = _collect_line_inliers(a, pool, u, perp_tol)
-            if len(inl) < slots:
+            u = _fit_direction(np.column_stack((xs[idx], ys[idx])), u)
+            px, py = xs - float(xs[idx].mean()), ys - float(ys[idx].mean())
+            along = px * u[0] + py * u[1]
+            across = -px * u[1] + py * u[0]
+            idx = np.nonzero(np.abs(across) <= perp_tol)[0]
+            if idx.size < slots:
                 continue
-            for i in range(len(inl) - slots + 1):
-                win = inl[i:i + slots]
-                wa = [al for al, _, _ in win]
-                gaps = [wa[k + 1] - wa[k] for k in range(slots - 1)]
-                med_gap = float(np.median(gaps)) if gaps else 0.0
+            idx = idx[np.argsort(along[idx])]
+            line_key = idx.tobytes()
+            if line_key in seen:
+                continue
+            seen.add(line_key)
+            wa_all, wx_all = along[idx], np.abs(across[idx])
+            for w in range(idx.size - slots + 1):
+                win = idx[w:w + slots]
+                key = frozenset(win.tolist())
+                gaps = np.diff(wa_all[w:w + slots])
+                med_gap = float(np.median(gaps)) if gaps.size else 0.0
                 if med_gap <= 1e-6:
                     continue
-                if max(gaps) > c["chain_gap_ratio_max"] * med_gap:
+                if float(gaps.max()) > gap_max * med_gap:
                     continue  # a hole this big bridges two separate cards
-                resid = float(np.mean([abs(x) for _, x, _ in win])) / max(perp_tol, 1e-6)
+                resid = float(np.mean(wx_all[w:w + slots])) / max(perp_tol, 1e-6)
                 gap_cv = float(np.std(gaps)) / max(float(np.mean(gaps)), 1e-6)
                 score = 1.0 - 0.4 * resid - 0.3 * min(gap_cv, 1.0)
-                chain = [g for _, _, g in win]
+                if key in best and best[key][0] >= score:
+                    continue
+                chain = [pool[t] for t in win]
                 uu = u
                 # canonical orientation for frame-to-frame stability
                 if (abs(uu[0]) < 1e-3 and uu[1] < 0) or (abs(uu[0]) >= 1e-3 and uu[0] < 0):
                     uu = (-uu[0], -uu[1])
                     chain = chain[::-1]
-                if best is None or score > best[0]:
-                    best = (score, chain, uu)
-    return best
+                best[key] = (score, chain, uu)
+    return list(best.values())
 
 
 def detect_cards(frame, cfg=None, codebook=None):
@@ -723,17 +735,18 @@ def _detect_cards_anchorless(glyphs, c, codebook):
     glyphs, no start square needed. Used when require_start is off, so the
     marks can be read/stabilized before an anchor protocol is finalized."""
     pool = [g for g in glyphs if g.kind in ("dot", "dash", "start")]
-    cards = []
-    for _ in range(8):  # cap number of chains per frame
-        found = _best_chain_anchorless(pool, c)
-        if not found:
+    candidates = _anchorless_candidates(pool, c)
+    candidates.sort(key=lambda item: -item[0])
+    used, cards = set(), []
+    limit = max(1, int(c["max_cards"]))       # table capacity per frame
+    for score, chain, u in candidates:
+        if len(cards) >= limit:
             break
-        score, chain, u = found
+        gids = {id(g) for g in chain}
+        if gids & used:
+            continue
+        used |= gids
         cards.append(read_card(None, chain, u, c, codebook, score))
-        cids = {id(g) for g in chain}
-        pool = [g for g in pool if id(g) not in cids]
-        if len(pool) < int(c["slots"]):
-            break
     cards.sort(key=lambda card: (card.cx, card.cy))
     return cards
 

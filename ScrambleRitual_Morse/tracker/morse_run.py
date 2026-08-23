@@ -14,6 +14,10 @@ import os
 import threading
 import time
 
+# .camera must be imported before cv2 (it sets an OpenCV videoio env switch
+# that is only read while the library loads) — see tracker/camera.py.
+from .camera import open_camera
+
 import cv2
 import numpy as np
 
@@ -124,11 +128,12 @@ def open_source(args, codebook):
         return open_orbbec_source(args)
 
     if args.camera is not None:
-        cap = cv2.VideoCapture(args.camera)
-        if not cap.isOpened():
-            raise SystemExit(f"cannot open camera: {args.camera}")
+        try:
+            cap, backend = open_camera(args.camera)
+        except RuntimeError as exc:
+            raise SystemExit(str(exc))
         fps = cap.get(cv2.CAP_PROP_FPS) or args.fps
-        return lambda t: cap.read()[1], f"camera:{args.camera}", fps
+        return lambda t: cap.read()[1], f"camera:{args.camera}({backend})", fps
 
     if args.video:
         cap = cv2.VideoCapture(args.video)

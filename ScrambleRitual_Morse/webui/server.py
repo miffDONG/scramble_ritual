@@ -19,6 +19,10 @@ import sys
 import threading
 import time
 
+# tracker.camera must be imported before cv2: it sets the OpenCV videoio env
+# switch that only takes effect while the library loads. See tracker/camera.py.
+from tracker.camera import open_camera, probe_cameras
+
 import cv2
 import numpy as np
 from flask import Flask, Response, jsonify, request, send_from_directory
@@ -36,13 +40,22 @@ from webui.diagnostics import (
 from tracker.stability import CardStabilizer
 
 # object-sim canvas + object layout (shared by render and ground-truth cards).
-# Matches the real 26.07.20 plate: an upright triangle whose morse chain sits
-# INSIDE it, horizontally, near the base.
-SIM_CANVAS = (900, 520)
+# Matches the real plates, whose morse chain sits INSIDE the body, horizontally,
+# near the base: the 26.07.20 upright triangle and the hexagon concept plate.
+# The table is sized to hold a full set of 20 objects without their chains
+# running into each other, and kept wide (~2.5:1) so it fills the monitor
+# column instead of sitting letterboxed inside it.
+SIM_CANVAS = (1920, 780)
+SIM_GRID = (7, 3)        # auto-placement cells (21 >= the 20-ID codebook)
 SIM_STEP = 22            # chain symbol spacing; must exceed dash_len enough that
                          # consecutive dashes don't merge under blur
 SIM_TRI_W = 260          # triangle base width
 SIM_TRI_H = 225          # triangle height (~equilateral)
+# Pointy-top regular hexagon plate (sampleVideo/morse-concepts). Circumradius
+# 126 -> 218 x 252 px: the flat left/right sides are 218 wide, which is what
+# the chain (176 px of symbols + the anchor marker) has to fit between.
+SIM_HEX_R = 126
+SIM_BODIES = ("triangle", "hexagon")
 SIM_CHAIN_DY = 50        # chain offset below the centroid (inside, near base)
 # The plate outline must stay BRIGHT: a dark outline survives thresholding and,
 # because findContours is RETR_EXTERNAL, it would enclose (and hide) the marks.
@@ -56,6 +69,10 @@ MEDIA_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "sampleVideo")
 
 VIDEO_EXTS = (".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v")
 IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".bmp", ".webp")
+
+#: consecutive failed camera reads (~20 ms apart) before the source is
+#: declared dead and the UI shows an error instead of a frozen preview
+CAM_FAIL_LIMIT = 90
 
 # OSC payload field order. In "list" format these are the positional slots;
 # in "dict" format they are the keys. Shown in the web UI so the receiver
@@ -110,13 +127,7 @@ def list_cameras():
                     for i, n in enumerate(names)]
         except Exception:
             pass
-    found = []
-    for i in range(6):
-        cap = cv2.VideoCapture(i)
-        if cap.isOpened():
-            found.append({"index": i, "name": f"Camera {i}"})
-        cap.release()
-    return found
+    return probe_cameras()
 
 
 def list_media(kind, base_dir=MEDIA_DIR):
@@ -373,23 +384,75 @@ def _attach_truth(cards, truth):
             c.flip, c.pitch = best.flip, best.pitch
 
 
-def draw_object_body(frame, cx, cy, angle_deg, color, flip=False):
-    """Upright triangle plate (apex up, base down) centred on its centroid,
-    with the three corner mounting holes — like the real acrylic object."""
+def _body_outline(body):
+    """Plate outline + mounting-hole positions in plate-local coords (origin =
+    centroid, +y down), for each physical object form."""
+    if body == "hexagon":
+        # pointy-top regular hexagon: vertex at top and bottom, flat sides
+        # left and right — the form the morse cells run along in the concept
+        # sheet (sampleVideo/morse-concepts/hex-code-edge-layouts.png)
+        r = float(SIM_HEX_R)
+        outline = [(r * math.cos(math.radians(-90 + i * 60)),
+                    r * math.sin(math.radians(-90 + i * 60))) for i in range(6)]
+        # holes near the top and the two lower vertices, pulled inside; they
+        # are the only asymmetric feature, so a flip stays visible on a shape
+        # that is otherwise its own mirror image
+        holes = [(0.0, -r + 22), (-r * 0.75, r * 0.5 - 14), (r * 0.75, r * 0.5 - 14)]
+        return outline, holes
+    hw, apex_y, base_y = SIM_TRI_W / 2.0, -SIM_TRI_H * 2 / 3.0, SIM_TRI_H / 3.0
+    return ([(0.0, apex_y), (-hw, base_y), (hw, base_y)],
+            [(0.0, apex_y + 20), (-hw + 22, base_y - 12), (hw - 22, base_y - 12)])
+
+
+def plate_reach():
+    """Worst-case (half-width, half-height) a plate reaches from its centroid,
+    over every body form. Vertically symmetric because a face flip mirrors the
+    outline, so a flipped plate must not fall off the table either."""
+    hw = hh = 0.0
+    for form in SIM_BODIES:
+        for x, y in _body_outline(form)[0]:
+            hw, hh = max(hw, abs(x)), max(hh, abs(y))
+    return hw, hh
+
+
+def table_slots():
+    """Normalized centres of the table's auto-placement grid, row by row.
+    Inset by the plate reach so an auto-placed object sits fully on the table
+    instead of hanging off the edge."""
+    cols, rows = SIM_GRID
+    w, h = SIM_CANVAS
+    hw, hh = plate_reach()
+    span_x, span_y = max(w - 2 * hw, 1.0), max(h - 2 * hh, 1.0)
+    return [((hw + span_x * (q / (cols - 1) if cols > 1 else 0.5)) / w,
+             (hh + span_y * (r / (rows - 1) if rows > 1 else 0.5)) / h)
+            for r in range(rows) for q in range(cols)]
+
+
+def free_table_slot(objs, tol=0.02):
+    """First grid cell no object is sitting on, else the table centre."""
+    taken = [(float(o.get("x", 0.5)), float(o.get("y", 0.5))) for o in objs]
+    for sx, sy in table_slots():
+        if all(abs(sx - x) > tol or abs(sy - y) > tol for x, y in taken):
+            return sx, sy
+    return 0.5, 0.5
+
+
+def draw_object_body(frame, cx, cy, angle_deg, color, flip=False,
+                     body="triangle"):
+    """Plate outline centred on its centroid, with its mounting holes — like
+    the real acrylic object. `body` picks the physical form: the upright
+    triangle (apex up, base down) or the pointy-top regular hexagon."""
     r = math.radians(angle_deg)
     cos_r, sin_r = math.cos(r), math.sin(r)
-    hw, apex_y, base_y = SIM_TRI_W / 2.0, -SIM_TRI_H * 2 / 3.0, SIM_TRI_H / 3.0
+    outline, holes = _body_outline(body)
     # A face flip is a reflection in the plate's local horizontal axis.  Do it
     # before tilt so flip=ON/0deg differs geometrically from flip=OFF/180deg.
     fy = -1.0 if flip else 1.0
-    local = [(0.0, apex_y * fy), (-hw, base_y * fy), (hw, base_y * fy)]
-    pts = [[int(v) for v in _rot(lx, ly, cos_r, sin_r, cx, cy)] for lx, ly in local]
+    pts = [[int(v) for v in _rot(lx, ly * fy, cos_r, sin_r, cx, cy)]
+           for lx, ly in outline]
     cv2.polylines(frame, [np.array(pts, np.int32)], True, color, 2, cv2.LINE_AA)
-    # corner holes, pulled slightly inside each vertex
-    for lx, ly in [(0.0, (apex_y + 20) * fy),
-                   (-hw + 22, (base_y - 12) * fy),
-                   (hw - 22, (base_y - 12) * fy)]:
-        hx, hy = _rot(lx, ly, cos_r, sin_r, cx, cy)
+    for lx, ly in holes:
+        hx, hy = _rot(lx, ly * fy, cos_r, sin_r, cx, cy)
         cv2.circle(frame, (int(hx), int(hy)), 5, color, 1, cv2.LINE_AA)
 
 
@@ -402,7 +465,8 @@ def render_objects(objs, codebook, n_slots, bg=245, color=0):
         cx, cy, angle = o["x"] * w, o["y"] * h, float(o.get("tilt", 0.0))
         bits = _obj_bits(int(o.get("code_id", 1)), codebook, n_slots)
         flipped = bool(o.get("flip", False))
-        draw_object_body(frame, cx, cy, angle, SIM_BODY_COLOR, flipped)
+        draw_object_body(frame, cx, cy, angle, SIM_BODY_COLOR, flipped,
+                         o.get("body", "triangle"))
         # chain drawn INSIDE the plate, near the base — sized to the smaller step
         ccx, ccy = sim_chain_center(cx, cy, angle, flipped)
         render_card(frame, bits, (ccx, ccy), angle, step=SIM_STEP, color=col,
@@ -473,6 +537,9 @@ class Pipeline(threading.Thread):
         self._last_full = None
         self._cam_dirty = True
         self.cam_status = ""
+        self._cam_backend = "-"
+        self._cam_fails = 0
+        self.source_error = None   # sticky open/read failure, shown in the UI
         self.active_name = ""
 
     # ---- config ------------------------------------------------------
@@ -648,39 +715,47 @@ class Pipeline(threading.Thread):
                 o["tilt"] = float(o.get("tilt", 0.0)) + spin * t + i * 23.0
         return objs
 
-    def object_op(self, action, body):
+    def object_op(self, action, req):
         """add / update / move / remove on the sim_objects list. Returns the
-        updated list. Coords are normalized 0..1 (triangle center)."""
+        updated list. Coords are normalized 0..1 (plate center)."""
         with self.lock:
             objs = self._objects()
             if action == "add":
-                x = max(0.0, min(1.0, float(body.get("x", 0.5))))
-                y = max(0.0, min(1.0, float(body.get("y", 0.5))))
-                objs.append({"code_id": int(body.get("code_id", len(objs) + 1)),
+                # no explicit spot -> drop it on the first free table cell.
+                # Stacking every new object on the middle of the table buried
+                # them in one blob that reads as a single (or no) card.
+                px, py = free_table_slot(objs)
+                x = max(0.0, min(1.0, float(req.get("x", px))))
+                y = max(0.0, min(1.0, float(req.get("y", py))))
+                objs.append({"code_id": int(req.get("code_id", len(objs) + 1)),
                              "x": x, "y": y, "tilt": 0.0, "flip": False,
-                             "shape": "triangle", "pitch": None})
+                             "shape": "triangle",
+                             "body": str(req.get("body", "triangle")),
+                             "pitch": None})
             elif action == "clear":
                 objs.clear()
             elif action in ("update", "move", "remove"):
-                i = int(body.get("index", -1))
+                i = int(req.get("index", -1))
                 if 0 <= i < len(objs):
                     if action == "remove":
                         objs.pop(i)
                     elif action == "move":
-                        objs[i]["x"] = max(0.0, min(1.0, float(body["x"])))
-                        objs[i]["y"] = max(0.0, min(1.0, float(body["y"])))
+                        objs[i]["x"] = max(0.0, min(1.0, float(req["x"])))
+                        objs[i]["y"] = max(0.0, min(1.0, float(req["y"])))
                     else:  # update
                         o = objs[i]
-                        if "code_id" in body:
-                            o["code_id"] = int(body["code_id"])
-                        if "tilt" in body:
-                            o["tilt"] = float(body["tilt"])
-                        if "flip" in body:
-                            o["flip"] = bool(body["flip"])
-                        if "shape" in body:
-                            o["shape"] = str(body["shape"])
-                        if "pitch" in body:
-                            p = body["pitch"]
+                        if "code_id" in req:
+                            o["code_id"] = int(req["code_id"])
+                        if "tilt" in req:
+                            o["tilt"] = float(req["tilt"])
+                        if "flip" in req:
+                            o["flip"] = bool(req["flip"])
+                        if "shape" in req:
+                            o["shape"] = str(req["shape"])
+                        if "body" in req:
+                            o["body"] = str(req["body"])
+                        if "pitch" in req:
+                            p = req["pitch"]
                             o["pitch"] = None if p is None else float(p)
             return list(objs)
 
@@ -746,6 +821,7 @@ class Pipeline(threading.Thread):
 
     def set_source(self, kind, arg=None):
         with self.lock:
+            self.source_error = None   # only the user picking a source clears it
             self.source_req = (kind, arg)
 
     def _open_source(self, kind, arg):
@@ -755,13 +831,13 @@ class Pipeline(threading.Thread):
         self._image = None
         if kind == "camera":
             idx = int(arg or 0)
-            cap = cv2.VideoCapture(idx, cv2.CAP_DSHOW)
-            if not cap.isOpened():
-                cap = cv2.VideoCapture(idx)
-            if not cap.isOpened():
-                raise RuntimeError(f"카메라 {idx}를 열 수 없습니다")
+            # open_camera proves the backend can actually deliver a frame
+            # before we keep it — on Windows an "open" camera often cannot.
+            cap, backend = open_camera(idx)
             self._cap = cap
-            self.source_desc = f"camera:{idx}"
+            self._cam_backend = backend
+            self._cam_fails = 0
+            self.source_desc = f"camera:{idx}({backend})"
             self._cam_dirty = True   # apply exposure/anti-flicker on next tick
         elif kind == "video":
             cap = cv2.VideoCapture(arg)
@@ -828,7 +904,19 @@ class Pipeline(threading.Thread):
             if self._cam_dirty:
                 self._apply_cam_props()
             ok, frame = self._cap.read()
-            return frame if ok else None
+            if ok and frame is not None:
+                self._cam_fails = 0
+                return frame
+            # A dropped frame or two is normal (USB hiccup, mode change); a
+            # camera that has stopped delivering entirely must surface as an
+            # error instead of a silently frozen preview.
+            self._cam_fails += 1
+            if self._cam_fails >= CAM_FAIL_LIMIT:
+                raise RuntimeError(
+                    f"카메라({self._cam_backend})가 프레임을 주지 않습니다 — "
+                    "다른 앱이 장치를 사용 중이거나 케이블/전원을 확인하세요")
+            time.sleep(0.02)
+            return None
         if kind == "image":
             time.sleep(1.0 / 15.0)  # settings still apply live
             return self._image.copy()
@@ -870,8 +958,10 @@ class Pipeline(threading.Thread):
                     self.stab.reset()
                 frame = self._read(time.monotonic() - t0, c)
             except Exception as exc:
+                # Sticky: the sim fallback keeps producing frames, so a
+                # per-frame error would flash past before anyone read it.
                 with self.lock:
-                    self.results["error"] = str(exc)
+                    self.source_error = str(exc)
                     self.source_req = ("sim", None)
                 continue
             if frame is None:
@@ -1066,10 +1156,8 @@ class Pipeline(threading.Thread):
                                "total": self.video_total,
                                "paused": self.paused}
                               if kind == "video" else None),
-                    "error": err or self.results.get("error"),
+                    "error": err or self.source_error,
                 }
-                if err is None:
-                    self.results["error"] = None
 
     def _send_osc(self, rt, stable, frame_size, roi_px=None):
         """Compute the tension graph, send per-object OSC (when enabled), and

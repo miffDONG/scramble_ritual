@@ -73,45 +73,6 @@
     "unsharp_amount": 0.6,
     "unsharp_enabled": false
   },
-  "vision": {
-    "invert": false,
-    "thresh": 150,
-    "blur_px": 3,
-    "morph_open_px": 3,
-    "morph_close_px": 5,
-    "min_area_px": 300,
-    "max_area_frac": 0.6,
-    "max_objects": 4,
-    "contact_gap_px": 6,
-    "contact_min_px": 4
-  },
-  "scene": {
-    "match_dist_px": 80,
-    "max_missed": 8,
-    "pos_alpha": 0.55,
-    "angle_alpha": 0.45
-  },
-  "sound": {
-    "mix": {
-      "disorder": 0.45,
-      "scatter": 0.25,
-      "overlap": 0.3,
-      "chain": 0.2
-    },
-    "grain_ms": [
-      319.0,
-      135.0
-    ],
-    "density_hz": [
-      8.0,
-      80.0
-    ],
-    "spray_ms": [
-      0.0,
-      250.0
-    ],
-    "smooth_alpha": 0.35
-  },
   "webui": {
     "proc_max_dim": 1280,
     "jpeg_quality": 80,

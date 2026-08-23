@@ -139,6 +139,27 @@ class TestMorseDetector(unittest.TestCase):
                 self.assertIn(cards[0].bits, (bits, bits[::-1]),
                               f"{bits}@{ang} -> {cards[0].bits}")
 
+    def test_anchorless_reads_a_full_table_not_just_eight(self):
+        # regression: the anchorless path used to stop after 8 chains per
+        # frame, so a full table silently dropped everything past the 8th
+        # object. max_cards is now the (configurable) capacity.
+        from tracker.morse import render_card
+        book = generate_codebook(count=20, bits=8, min_distance=3)
+        cols, rows = 5, 4
+        frame = np.full((1040, 1800, 3), 245, np.uint8)
+        for i in range(20):
+            r, q = divmod(i, cols)
+            render_card(frame, book[i + 1],
+                        ((q + 0.5) * 1800 / cols, (r + 0.5) * 1040 / rows),
+                        0.0, draw_start=False)
+        cfg = {"slots": 8, "require_start": False, "max_cards": 20}
+        _, cards, _ = detect_cards(frame, cfg, book)
+        self.assertEqual(len(cards), 20)
+        self.assertEqual(sorted(c.code_id for c in cards), list(range(1, 21)))
+        # and the cap still caps
+        _, capped, _ = detect_cards(frame, {**cfg, "max_cards": 8}, book)
+        self.assertEqual(len(capped), 8)
+
     def test_require_start_true_ignores_anchorless_chain(self):
         # with the anchor required, a chain that has no start marker yields
         # no card (the default protocol behavior is unchanged)

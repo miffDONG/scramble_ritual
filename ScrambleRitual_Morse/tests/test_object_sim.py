@@ -113,12 +113,63 @@ class TestTension(unittest.TestCase):
         self.assertEqual(S.Pipeline._object_freq(cards[0]), 3.0)
 
 
+class TestTable(unittest.TestCase):
+    def test_grid_holds_a_full_codebook(self):
+        # the table must have a spot for every ID in the 20-code codebook
+        self.assertGreaterEqual(len(S.table_slots()), 20)
+
+    def test_slots_keep_every_plate_on_the_table(self):
+        # auto-placed plates (either body, flipped or not) stay inside the
+        # canvas — a slot at the bare cell centre used to hang off the edge
+        w, h = S.SIM_CANVAS
+        hw, hh = S.plate_reach()
+        for x, y in S.table_slots():
+            self.assertGreaterEqual(x * w - hw, -0.5)
+            self.assertLessEqual(x * w + hw, w + 0.5)
+            self.assertGreaterEqual(y * h - hh, -0.5)
+            self.assertLessEqual(y * h + hh, h + 0.5)
+
+    def test_free_slot_skips_taken_ones(self):
+        slots = S.table_slots()
+        placed = [{"x": x, "y": y} for x, y in slots[:3]]
+        self.assertEqual(S.free_table_slot(placed), slots[3])
+        self.assertEqual(S.free_table_slot([]), slots[0])
+
+    def test_hexagon_body_is_a_pointy_top_hexagon(self):
+        outline, holes = S._body_outline("hexagon")
+        self.assertEqual(len(outline), 6)
+        self.assertEqual(len(holes), 3)
+        ys = [y for _, y in outline]
+        xs = [x for x, _ in outline]
+        # pointy top/bottom, flat left/right sides -> taller than it is wide
+        self.assertGreater(max(ys) - min(ys), max(xs) - min(xs))
+        # the chain (anchor + 8 symbols) has to fit between the flat sides
+        chain_half = (int(S.SIM_STEP) * 9) / 2.0
+        self.assertGreater(max(xs), chain_half)
+
+    def test_unknown_body_falls_back_to_the_triangle(self):
+        self.assertEqual(S._body_outline("nope"), S._body_outline("triangle"))
+
+
 class TestObjectCrud(unittest.TestCase):
     def setUp(self):
         self.p = S.Pipeline.__new__(S.Pipeline)  # bare, no thread/config load
         import threading
         self.p.lock = threading.Lock()
         self.p.runtime = {"sim_objects": []}
+
+    def test_add_without_coords_fills_the_grid(self):
+        for _ in range(20):
+            self.p.object_op("add", {})
+        spots = [(o["x"], o["y"]) for o in self.p._objects()]
+        self.assertEqual(len(set(spots)), 20)      # no pile-up on one spot
+        self.assertEqual(spots, S.table_slots()[:20])
+
+    def test_body_defaults_to_triangle_and_is_updatable(self):
+        self.p.object_op("add", {})
+        self.assertEqual(self.p._objects()[0]["body"], "triangle")
+        self.p.object_op("update", {"index": 0, "body": "hexagon"})
+        self.assertEqual(self.p._objects()[0]["body"], "hexagon")
 
     def test_add_move_update_remove_clear(self):
         objs = self.p.object_op("add", {"x": 0.2, "y": 0.3, "code_id": 5})

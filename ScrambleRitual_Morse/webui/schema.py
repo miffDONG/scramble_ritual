@@ -188,6 +188,10 @@ SCHEMA = [
     dict(key="chain_neighbors", scope="morse", kind="int", group="체인 기하",
          label="방향 후보 수", min=3, max=24, step=1,
          help="시작 마커당 시도하는 체인 방향 가설 수. 글리프가 많은 장면에서 올리면 안정적"),
+    dict(key="max_cards", scope="morse", kind="int", group="체인 기하",
+         label="최대 카드 수", min=1, max=40, step=1,
+         help="한 프레임에서 읽는 카드(오브제) 최대 개수. 테이블에 올릴 수 있는 "
+              "오브제 수만큼 잡으세요 — 이 값을 넘는 카드는 그냥 버려집니다"),
 
     # --- 디코드 -------------------------------------------------------
     dict(key="decode_mode", scope="morse", kind="select", group="디코드",
@@ -257,8 +261,9 @@ RUNTIME_DEFAULTS = {
     "cam_powerline": 0,          # 1=50Hz, 2=60Hz, 0=미설정(드라이버 지원 시)
     # 오브제 시뮬레이션: 'objects' 소스에서 검출 없이 사운드/OSC를 개발하기 위한
     # 그라운드 트루스 오브제 목록. 각 원소:
-    #   {code_id:int, x:0~1, y:0~1(삼각형 중심), tilt:deg, flip:bool,
-    #    shape:"triangle"|"square"|"pentagon"|"hexagon"|"star",
+    #   {code_id:int, x:0~1, y:0~1(판 중심), tilt:deg, flip:bool,
+    #    body:"triangle"|"hexagon"(오브제 판 형태),
+    #    shape:"triangle"|"square"|"pentagon"|"hexagon"|"star"(시작 마커 모양),
     #    pitch:float|None(세미톤 밴드)}
     "sim_objects": [],
     "sim_spin": 0.0,             # 자동 회전 속도(도/초). 0=끔. 서버가 돌려서

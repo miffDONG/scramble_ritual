@@ -23,7 +23,7 @@ scripts\exhibition_start.bat --no-rtv   :: reacTIVision을 직접 띄울 때
 
 수동: `.venv\Scripts\python -m webui.exhibit_server [--port 8765] [--rtv-exe PATH] [--no-rtv]`
 
-- reacTIVision 1.5.1 win64 배포판은 프로젝트 **밖** `C:\Users\baksh\scramble_ritual\scramble_reactivision\`에 둔다.
+- reacTIVision 1.5.1 win64 배포판은 프로젝트 **밖** `C:\Users\baksh\scramble_ritual\reactivision\`에 둔다.
   없으면 첫 실행 때 `~/Downloads/reacTIVision-1.5.1-win64/…`에서 자동 복사한다.
 - 서버가 그 폴더의 `camera.xml`/`reacTIVision.xml`을 웹 설정으로 생성한다(원본은 `*.orig`).
 - 설정은 `webui/exhibit_config.json`에 자동 저장, 이름별 프로파일은 `configs/exhibit/<이름>.json`.

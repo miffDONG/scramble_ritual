@@ -2,7 +2,7 @@
 Scramble Ritual — exhibition server (reacTIVision edition).
 
     USB camera -> reacTIVision.exe (child process; camera.xml/reacTIVision.xml
-                  are generated into its own folder, ~/scramble_ritual/scramble_reactivision/)
+                  are generated into its own folder, ~/scramble_ritual/reactivision/)
                -> TUIO /tuio/2Dobj on UDP 127.0.0.1:3333
                -> this pipeline: ROI normalize -> tension graph -> OSC
                -> /scramble/obj to every OSC target (SuperCollider, TouchDesigner)

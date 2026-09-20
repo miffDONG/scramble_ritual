@@ -44,7 +44,7 @@ from xml.sax.saxutils import quoteattr
 PROJECT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 #: reacTIVision lives OUTSIDE the project (and outside OneDrive): our own copy
 #: of the distribution, whose camera.xml / reacTIVision.xml we overwrite.
-INSTALL_DIR = os.path.join(os.path.expanduser("~"), "scramble_ritual", "scramble_reactivision")
+INSTALL_DIR = os.path.join(os.path.expanduser("~"), "scramble_ritual", "reactivision")
 #: server-side scratch (modes cache) next to the exe
 RTV_WORK_DIR = INSTALL_DIR
 EXE_CANDIDATES = [
@@ -54,7 +54,7 @@ EXE_CANDIDATES = [
 ]
 
 RTV_DEFAULTS = {
-    "rtv_exe": "",               # "" = 자동 탐색 (~/scramble_ritual/scramble_reactivision → Downloads)
+    "rtv_exe": "",               # "" = 자동 탐색 (~/scramble_ritual/reactivision → Downloads)
     "rtv_autostart": True,       # 서버 시작 시 reacTIVision 자동 실행
     "rtv_no_window": False,      # -n : reacTIVision 창 없이 실행
     # camera.xml

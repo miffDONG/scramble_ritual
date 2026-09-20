@@ -27,8 +27,8 @@ if not exist ".venv\Scripts\python.exe" (
   )
 )
 
-if not exist "%USERPROFILE%\scramble_ritual\scramble_reactivision\reacTIVision.exe" (
-  echo [warn] %USERPROFILE%\scramble_ritual\scramble_reactivision\reacTIVision.exe not found.
+if not exist "%USERPROFILE%\scramble_ritual\reactivision\reacTIVision.exe" (
+  echo [warn] %USERPROFILE%\scramble_ritual\reactivision\reacTIVision.exe not found.
   echo        The server copies the reacTIVision-1.5.1-win64 folder there from Downloads on
   echo        first start ^(or set the exe path in the web UI^).
 )

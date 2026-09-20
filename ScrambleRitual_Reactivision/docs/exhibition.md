@@ -8,8 +8,8 @@ scripts/exhibition_start.bat
         │
         ▼
 webui/exhibit_server.py  (Flask, http://localhost:8765, UI = static/exhibit.html)
-        │  1) C:\Users\baksh\scramble_ritual\scramble_reactivision\camera.xml, reacTIVision.xml 생성 (exe 폴더 안, 원본은 *.orig)
-        │  2) C:\Users\baksh\scramble_ritual\scramble_reactivision\reacTIVision.exe 실행 (인자 없음, 자식 프로세스)
+        │  1) C:\Users\baksh\scramble_ritual\reactivision\camera.xml, reacTIVision.xml 생성 (exe 폴더 안, 원본은 *.orig)
+        │  2) C:\Users\baksh\scramble_ritual\reactivision\reacTIVision.exe 실행 (인자 없음, 자식 프로세스)
         ▼
 [USB 카메라] → reacTIVision.exe ── TUIO 1.1 (/tuio/2Dobj, UDP 127.0.0.1:3333) ──▶ TuioReceiver
                                                                                      │
@@ -26,7 +26,7 @@ webui/exhibit_server.py  (Flask, http://localhost:8765, UI = static/exhibit.html
 
 ## 실행
 
-1. reacTIVision은 프로젝트 **밖** `C:\Users\baksh\scramble_ritual\scramble_reactivision\`에 둔다(배포판 폴더 내용: `reacTIVision.exe`,
+1. reacTIVision은 프로젝트 **밖** `C:\Users\baksh\scramble_ritual\reactivision\`에 둔다(배포판 폴더 내용: `reacTIVision.exe`,
    `SDL2.dll`, `symbols/`, `calibration/`). 그 폴더가 없으면 서버가 첫 실행 때 `~/Downloads/reacTIVision-1.5.1-win64/…`
    에서 자동 복사한다. 프로젝트(OneDrive) 안에는 두지 않는다 — reacTIVision 소속이 아니고, OneDrive 동기화 잠금도 피한다.
 2. `scripts/exhibition_start.bat` 더블클릭 → 브라우저 `http://localhost:8765`.
@@ -73,7 +73,7 @@ webui/exhibit_server.py  (Flask, http://localhost:8765, UI = static/exhibit.html
 | (파이프라인) | | `rtv_angle_offset` | 0 | tilt 0° 보정(도) |
 | (파이프라인) | | `rtv_stale_s` | 1.0 | TUIO 끊김 판정 시간 |
 
-생성 파일 위치: `C:\Users\baksh\scramble_ritual\scramble_reactivision\camera.xml`, `C:\Users\baksh\scramble_ritual\scramble_reactivision\reacTIVision.xml` — **exe 폴더 안**. 서버가 매 시작마다 덮어쓰고,
+생성 파일 위치: `C:\Users\baksh\scramble_ritual\reactivision\camera.xml`, `C:\Users\baksh\scramble_ritual\reactivision\reacTIVision.xml` — **exe 폴더 안**. 서버가 매 시작마다 덮어쓰고,
 배포판 원본은 처음 한 번 `camera.xml.orig` / `reacTIVision.xml.orig`로 보관한다.
 
 > 왜 exe 폴더인가: reacTIVision 1.5.1은 `<camera config="…">` 태그가 있으면(절대·상대 경로 무관) camera.xml을
@@ -114,7 +114,7 @@ webui/exhibit_server.py  (Flask, http://localhost:8765, UI = static/exhibit.html
 | 증상 | 확인 |
 | --- | --- |
 | 상태에 "즉시 종료" | 카메라를 다른 프로그램이 잡고 있음(다른 reacTIVision, 실험 튜너, 브라우저). 모두 닫고 시작 |
-| exe 없음 | `C:\Users\baksh\scramble_ritual\scramble_reactivision\reacTIVision.exe` 확인(또는 Downloads에 배포판을 두면 자동 복사) 또는 exe 경로 입력 |
+| exe 없음 | `C:\Users\baksh\scramble_ritual\reactivision\reacTIVision.exe` 확인(또는 Downloads에 배포판을 두면 자동 복사) 또는 exe 경로 입력 |
 | TUIO 0fps | reacTIVision 창이 떠 있는데 0이면 TUIO 포트 불일치(UI의 TUIO port = reacTIVision.xml) 또는 3333을 다른 앱이 점유 |
 | 오브제 0 | reacTIVision 창(`t` 키로 이진화 화면)에서 마커가 잡히는지 확인. 초점·마커 크기(한 변 ≥ 40px)·gradient |
 | fps가 안 오름 | exposure를 낮추고(−7), MJPG 모드인지 확인 |

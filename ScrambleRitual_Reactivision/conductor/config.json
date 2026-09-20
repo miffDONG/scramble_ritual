@@ -1,0 +1,54 @@
+{
+  "serial": {
+    "port": null,
+    "baud": 115200
+  },
+  "show": {
+    "fps": 20
+  },
+  "engine": {
+    "tau_attack": 0.135,
+    "tau_release": 0.319,
+    "relay_cooldown_s": 0.4,
+    "max_flips_per_frame": 24,
+    "max_on": 60,
+    "seed": 1135,
+    "profile_intact":   [0.75, 0.42, 0.58, 0.83, 0.33, 0.67, 0.50, 0.92, 0.25, 0.58, 0.42, 0.67],
+    "profile_scramble": [0.45, 0.30, 0.55, 0.40, 0.60, 0.35, 0.50, 0.45, 0.30, 0.55, 0.40, 0.50]
+  },
+  "music": {
+    "fps": 20,
+    "audio": {
+      "block": 2048,
+      "n_bands": 12,
+      "fmin": 40.0,
+      "fmax": 8000.0,
+      "bass_hz": 160.0,
+      "onset_thresh": 1.8,
+      "onset_refractory_s": 0.12,
+      "agc_decay_s": 6.0
+    },
+    "wave": {
+      "seed": 319,
+      "ripple_speed": 7.0,
+      "ripple_width": 1.4,
+      "ripple_decay_s": 0.9,
+      "max_ripples": 6,
+      "sweep_wavelen": 6.0,
+      "sweep_omega": 4.5,
+      "spectrum_smooth_s": 0.12
+    },
+    "select": {
+      "density_floor": 0.0,
+      "density_gain": 1.0
+    },
+    "guard": {
+      "relay_cooldown_s": 0.3,
+      "max_flips_per_frame": 28,
+      "max_on": 60,
+      "max_hold_s": 4.0,
+      "rest_s": 1.0,
+      "seed": 1135
+    }
+  }
+}

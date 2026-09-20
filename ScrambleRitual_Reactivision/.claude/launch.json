@@ -1,0 +1,23 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "exhibit",
+      "runtimeExecutable": ".venv/Scripts/python.exe",
+      "runtimeArgs": ["-m", "webui.exhibit_server"],
+      "port": 8765
+    },
+    {
+      "name": "exhibit-manual",
+      "runtimeExecutable": ".venv/Scripts/python.exe",
+      "runtimeArgs": ["-m", "webui.exhibit_server", "--no-rtv"],
+      "port": 8765
+    },
+    {
+      "name": "conductor-demo",
+      "runtimeExecutable": ".venv/Scripts/python.exe",
+      "runtimeArgs": ["-m", "conductor.demo", "--seconds", "8"],
+      "port": 0
+    }
+  ]
+}

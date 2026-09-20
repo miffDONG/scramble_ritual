@@ -1,0 +1,6 @@
+opencv-python
+numpy
+python-osc
+pyserial
+sounddevice
+flask

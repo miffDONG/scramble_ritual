@@ -1,0 +1,637 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Scramble Ritual · 전시</title>
+<style>
+  :root {
+    --bg: #101216; --panel: #191c22; --panel2: #22262e; --panel3: #2a2f39;
+    --text: #e8eaee; --dim: #98a0ac; --line: #333845;
+    --accent: #ffb347; --ok: #63d66f; --bad: #ff6b6b; --info: #5db3ff;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.55 "Segoe UI", "Malgun Gothic", sans-serif; }
+  header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--line);
+    position: sticky; top: 0; z-index: 5; }
+  header h1 { font-size: 16px; margin: 0 8px 0 0; color: var(--accent); }
+  .badge { display: inline-block; padding: 2px 10px; border-radius: 999px;
+    background: var(--panel3); border: 1px solid var(--line); font-size: 12.5px;
+    font-variant-numeric: tabular-nums; }
+  .badge.ok { color: var(--ok); border-color: var(--ok); }
+  .badge.bad { color: var(--bad); border-color: var(--bad); }
+  .badge.info { color: var(--info); border-color: var(--info); }
+  #error { color: var(--bad); font-size: 13px; }
+  main { display: flex; gap: 14px; padding: 14px; align-items: flex-start; }
+  #monitor { flex: 1 1 62%; min-width: 340px; }
+  #config { flex: 0 0 420px; max-height: calc(100vh - 78px); overflow-y: auto; }
+  .card { background: var(--panel); border: 1px solid var(--line);
+    border-radius: 10px; padding: 12px 14px; margin-bottom: 12px; }
+  .card h2 { font-size: 13.5px; margin: 0 0 10px; color: var(--accent); letter-spacing: .02em; }
+  .card h2 .step { display: inline-block; width: 20px; height: 20px; line-height: 20px;
+    text-align: center; border-radius: 50%; background: var(--accent); color: #101216;
+    font-size: 12px; margin-right: 7px; }
+  .viewbox { position: relative; height: 58vh; display: flex; align-items: center;
+    justify-content: center; background: #000; border-radius: 8px; overflow: hidden; }
+  .viewbox img { max-height: 100%; max-width: 100%; width: auto; height: auto; display: block; }
+  #roiLayer { position: absolute; inset: 0; cursor: crosshair; display: none; z-index: 3; }
+  #roiLayer.active { display: block; }
+  #roiRect { position: absolute; border: 2px dashed var(--accent);
+    background: rgba(255,179,71,.15); display: none; pointer-events: none; z-index: 4; }
+  .btn { background: var(--panel2); color: var(--text); border: 1px solid var(--line);
+    padding: 6px 14px; border-radius: 7px; cursor: pointer; font-size: 13px; }
+  .btn:hover { border-color: var(--accent); }
+  .btn.primary { background: var(--accent); color: #101216; border-color: var(--accent); font-weight: 600; }
+  .btn.danger { background: var(--bad); color: #101216; border-color: var(--bad); font-weight: 600; }
+  .btn.small { padding: 3px 9px; font-size: 12px; }
+  .btn:disabled { opacity: .45; cursor: default; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 7px 0; }
+  select, input[type=text], input[type=number] { background: var(--panel2);
+    border: 1px solid var(--line); color: var(--text); border-radius: 6px;
+    padding: 6px 9px; font-size: 13px; }
+  select:focus, input:focus { outline: 1px solid var(--accent); }
+  .flabel { display: block; font-size: 12px; color: var(--dim); margin: 8px 0 4px; }
+  .grid { display: grid; grid-template-columns: 120px 1fr; gap: 6px 8px; align-items: center; }
+  .grid label { font-size: 12.5px; color: var(--text); cursor: help; }
+  .grid input, .grid select { width: 100%; padding: 4px 7px; font-size: 12.5px; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 12px; }
+  .grid2 .grid { grid-template-columns: 84px 1fr; }
+  input[type=checkbox] { width: 17px; height: 17px; accent-color: var(--accent); }
+  #chips { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0 2px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
+  th, td { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--line); }
+  th { color: var(--dim); font-weight: 500; font-size: 12px; }
+  td input, td select { width: 100%; padding: 3px 6px; font-size: 12px; }
+  .mono { font-family: Consolas, monospace; }
+  .ok { color: var(--ok); } .bad { color: var(--bad); } .dim { color: var(--dim); }
+  .hint { color: var(--dim); font-size: 12px; margin: 4px 0 0; }
+  details { border: 1px solid var(--line); border-radius: 8px; margin: 8px 0; background: var(--panel2); }
+  details summary { cursor: pointer; padding: 6px 10px; color: var(--accent); font-size: 12.5px; user-select: none; }
+  details .body { padding: 4px 10px 8px; }
+  pre#rtvLog { max-height: 180px; overflow: auto; font: 11.5px Consolas, monospace;
+    background: #0b0d10; padding: 8px; border-radius: 6px; margin: 4px 0 0; white-space: pre-wrap; }
+  #rtvStatus { font-size: 12.5px; padding: 6px 8px; border-radius: 6px; background: var(--panel2); margin-top: 6px; }
+  #rtvStatus.ok { border-left: 3px solid var(--ok); } #rtvStatus.bad { border-left: 3px solid var(--bad); }
+  #toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%);
+    background: var(--accent); color: #101216; padding: 8px 18px; border-radius: 8px;
+    opacity: 0; transition: opacity .25s; pointer-events: none; font-weight: 600; z-index: 20; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Scramble Ritual · 전시</h1>
+  <span class="badge" id="rtvBadge">reacTIVision -</span>
+  <span class="badge" id="tuioBadge">TUIO -</span>
+  <span class="badge" id="oscBadge" title="OSC 실제 송신 주기와 사이클당 메시지 수">OSC 끔</span>
+  <button class="btn primary" id="inferBtn" onclick="toggleInfer()">OSC 일시정지</button>
+  <span id="error"></span>
+</header>
+<main>
+  <!-- ================= Monitor (좌) ================= -->
+  <div id="monitor">
+    <div class="card">
+      <div class="row" style="margin:2px 0 6px">
+        <button class="btn" id="roiBtn" onclick="setDragMode('roi')">테이블 영역 지정</button>
+        <button class="btn" onclick="clearRoi()">영역 지우기</button>
+        <span class="badge" id="roiBadge">영역 없음</span>
+        <button class="btn" id="calBtn" onclick="setDragMode('calibrate')"
+                title="오브제(삼각형) 한 변을 드래그해 길이를 측정합니다. 긴장도가 오브제 크기 기준이 됩니다">한 변 측정</button>
+        <span class="badge info" id="calBadge">크기 미설정</span>
+      </div>
+      <div class="viewbox">
+        <img id="stream" src="/stream/overlay" alt="stream">
+        <div id="roiLayer"></div>
+        <div id="roiRect"></div>
+      </div>
+      <div id="chips">
+        <span class="badge ok" id="chipObjs">오브제 -</span>
+        <span class="badge" id="chipSize">-</span>
+        <span class="badge info" id="chipTension" title="긴장도 d_near 기준(오브제 크기 측정값 또는 고정값)">긴장 기준 -</span>
+      </div>
+      <p class="hint">미리보기는 reacTIVision이 보내는 TUIO 값으로 그린 합성 화면입니다. 실제 카메라 영상은 reacTIVision 창에서 확인하세요.</p>
+    </div>
+    <div class="card">
+      <h2>오브제 (피듀셜)</h2>
+      <table id="objTbl"><thead><tr>
+        <th>ID</th><th>세션</th><th>x</th><th>y</th><th>tilt</th><th>tension</th>
+      </tr></thead><tbody></tbody></table>
+    </div>
+    <div class="card" id="oscCard">
+      <h2>OSC 모니터</h2>
+      <table id="oscTbl"><thead><tr><th>대상</th><th>주소</th><th>값</th></tr></thead><tbody></tbody></table>
+    </div>
+  </div>
+
+  <!-- ================= Config (우) ================= -->
+  <div id="config">
+    <div class="card">
+      <h2><span class="step">1</span>전시 카메라 (reacTIVision)</h2>
+      <label class="flabel">카메라</label>
+      <div class="row">
+        <select id="rtvCam" style="flex:1" onchange="fillRes()"></select>
+        <button class="btn" onclick="loadRtvModes(true)" title="카메라·지원 모드 다시 읽기 (reacTIVision -l). 실행 중이면 잠시 멈췄다가 다시 시작">↺</button>
+      </div>
+      <div class="grid2">
+        <div class="grid">
+          <label title="카메라가 지원하는 모드 목록 (reacTIVision -l)">해상도</label>
+          <select id="rtvRes" onchange="fillFps()"></select>
+        </div>
+        <div class="grid">
+          <label title="선택한 해상도에서 가능한 fps. 기본 120">fps</label>
+          <select id="rtvFps"></select>
+        </div>
+      </div>
+      <p class="hint" id="modeHint">120fps는 노출(exposure)을 −7 이하(1/128초)로 두어야 실제로 나옵니다. 값이 클수록 밝지만 fps가 떨어집니다.</p>
+      <details open>
+        <summary>카메라 설정 (camera.xml)</summary>
+        <div class="body grid2">
+          <div class="grid">
+            <label title="DirectShow log2 초. -6=1/64s, -7=1/128s. default/min/max 가능">exposure</label><input type="text" id="rtv_exposure">
+            <label>gain</label><input type="text" id="rtv_gain">
+            <label>brightness</label><input type="text" id="rtv_brightness">
+            <label>contrast</label><input type="text" id="rtv_contrast">
+            <label>gamma</label><input type="text" id="rtv_gamma">
+          </div>
+          <div class="grid">
+            <label>sharpness</label><input type="text" id="rtv_sharpness">
+            <label title="min = 가장 가까운 초점. 카메라 거리에 맞춰 조정">focus</label><input type="text" id="rtv_focus">
+            <label>shutter</label><input type="text" id="rtv_shutter">
+            <label title="원본 프레임 크롭 폭 (max=전체)">frame w</label><input type="text" id="rtv_frame_width">
+            <label title="원본 프레임 크롭 높이 (max=전체)">frame h</label><input type="text" id="rtv_frame_height">
+          </div>
+        </div>
+        <div class="body grid2" style="padding-top:0">
+          <div class="grid"><label>xoff</label><input type="number" id="rtv_xoff"></div>
+          <div class="grid"><label>yoff</label><input type="number" id="rtv_yoff"></div>
+        </div>
+      </details>
+      <details open>
+        <summary>인식 설정 (reacTIVision.xml)</summary>
+        <div class="body grid2">
+          <div class="grid">
+            <label title="이진화 gradient gate (기본 32). 낮을수록 민감">gradient</label><input type="number" id="rtv_gradient" min="0" max="255">
+            <label title="이진화 tile size (기본 10)">tile</label><input type="number" id="rtv_tile" min="1" max="64">
+            <label title="0 = 손가락 추적 끔">finger size</label><input type="number" id="rtv_finger_size" min="0" max="64">
+            <label>finger sens.</label><input type="number" id="rtv_finger_sensitivity" min="0" max="200">
+            <label title="reacTIVision 창에 보이는 영상: src 원본 / dest 이진화 / none 없음">display</label>
+            <select id="rtv_display"><option value="src">src (원본)</option><option value="dest">dest (이진화)</option><option value="none">none</option></select>
+          </div>
+          <div class="grid">
+            <label title="reacTIVision이 TUIO를 보내는 UDP 포트. 서버가 이 포트에서 수신">TUIO port</label><input type="number" id="rtv_tuio_port" min="1024" max="65535">
+            <label>engine</label>
+            <select id="rtv_engine"><option value="amoeba">amoeba</option><option value="classic">classic</option></select>
+            <label title="비우면 기본 default.trees. small → symbols/amoeba/small.trees, legacy → legacy.trees">tree</label><input type="text" id="rtv_tree" placeholder="(기본)">
+            <label title="calibration 파일 (기본 default.grid)">calib file</label><input type="text" id="rtv_calib_file">
+            <label title="x, y, a 조합 (예: xya). 비우면 없음">invert</label><input type="text" id="rtv_calib_invert">
+          </div>
+        </div>
+        <div class="body row" style="padding-top:0">
+          <label><input type="checkbox" id="rtv_equalize"> 배경 차감(equalize)</label>
+          <label title="reacTIVision 창 없이 실행(TUIO는 동일하게 나옴). 이 모드는 콘솔에 format 줄을 찍지 않아 상태의 해상도가 '(설정값)'으로 표시됨"><input type="checkbox" id="rtv_no_window"> 창 없이 실행(-n)</label>
+          <label><input type="checkbox" id="rtv_autostart"> 서버 시작 시 자동 실행</label>
+        </div>
+      </details>
+      <div class="row">
+        <button class="btn primary" onclick="applyRtv()">적용 (재시작)</button>
+        <button class="btn" onclick="rtvCtl('start')">시작</button>
+        <button class="btn danger" onclick="rtvCtl('stop')">정지</button>
+        <button class="btn" onclick="rtvImport()" title="reacTIVision 폴더의 camera.xml / reacTIVision.xml 값을 읽어옴">XML 가져오기</button>
+      </div>
+      <div id="rtvStatus">-</div>
+      <details id="logDetails"><summary>reacTIVision 로그</summary><div class="body"><pre id="rtvLog"></pre></div></details>
+      <div class="grid" style="margin-top:6px">
+        <label title="비우면 %USERPROFILE%\scramble_ritual\scramble_reactivision → Downloads 순으로 자동 탐색">exe 경로</label><input type="text" id="rtv_exe" placeholder="(자동)">
+      </div>
+    </div>
+
+    <div class="card">
+      <h2><span class="step">2</span>테이블 영역 · 오브제 크기</h2>
+      <p class="hint">테이블 영역(ROI)을 지정하면 x, y가 테이블 기준 0~1로 정규화됩니다. 카메라를 옮겨도 같은 배치 = 같은 값. 오브제 한 변을 측정하면 긴장도 1의 거리가 오브제 크기에서 유도됩니다.</p>
+      <div class="grid">
+        <label title="오브제 크기를 측정하지 않았을 때 긴장도 1이 되는 거리 (테이블 긴 변 기준 0~1)">폴백 접촉거리</label>
+        <input type="number" id="tension_contact" step="0.01" min="0.01" max="0.5" onchange="postOpt('tension_contact', +this.value)">
+        <label title="측정된 오브제 한 변 (캔버스 px). 0이면 폴백 사용">한 변 px</label>
+        <input type="number" id="object_side_px" step="1" min="0" onchange="postOpt('object_side_px', +this.value)">
+      </div>
+    </div>
+
+    <div class="card">
+      <h2><span class="step">3</span>긴장도</h2>
+      <div class="grid">
+        <label title="각 오브제가 어떤 이웃과 연결되는지. MST = 모든 오브제를 하나의 최소 신장 트리로 잇고(n−1 간선) 트리 이웃만 반영">연결</label>
+        <select id="tension_connect" onchange="postOpt('tension_connect', this.value)">
+          <option value="mst">MST (최소 신장 트리)</option><option value="all">전체 (n−1)</option><option value="near">근접만 (반경 이내)</option><option value="knn">최근접 k개</option>
+        </select>
+        <label title="연결된 이웃들의 긴장도를 하나로 합치는 방식">결합</label>
+        <select id="tension_fold" onchange="postOpt('tension_fold', this.value)">
+          <option value="max">max</option><option value="avg">avg</option><option value="min">min</option>
+        </select>
+        <label>k</label><input type="number" id="tension_knn" min="1" max="16" onchange="postOpt('tension_knn', +this.value)">
+        <label title="near일 때 연결 반경 (테이블 긴 변 기준 0~1)">연결 반경</label>
+        <input type="number" id="tension_link_radius" step="0.01" min="0.02" max="1" onchange="postOpt('tension_link_radius', +this.value)">
+        <label>그래프 표시</label><input type="checkbox" id="show_graph" onchange="postOpt('show_graph', this.checked)">
+      </div>
+    </div>
+
+    <div class="card">
+      <h2><span class="step">4</span>OSC 송신 (다중 대상)</h2>
+      <div class="row">
+        <label><input type="checkbox" id="osc_enabled" onchange="postOpt('osc_enabled', this.checked)"> 송신 켜기</label>
+        <input type="text" id="osc_prefix" style="width:120px" placeholder="/scramble" onchange="postOpt('osc_prefix', this.value || '/scramble')">
+        <button class="btn small" onclick="addTarget()">+ 대상 추가</button>
+        <button class="btn small primary" onclick="applyTargets()">대상 적용</button>
+      </div>
+      <table id="tgtTbl"><thead><tr><th>이름</th><th>host</th><th>port</th><th>형식</th><th>on</th><th></th></tr></thead><tbody></tbody></table>
+      <div id="oscFieldOrder" class="hint mono"></div>
+      <p class="hint">모든 대상에 같은 <code>/scramble/obj</code> 메시지(오브제 1개당 1개, 카메라 프레임마다)를 보냅니다. 형식: 리스트=값 순서대로 / 딕셔너리=키,값 번갈아 / JSON=문자열 1개.</p>
+    </div>
+
+    <div class="card">
+      <h2><span class="step">5</span>프로파일</h2>
+      <div class="row">
+        <input type="text" id="cfgName" placeholder="이름 (예: 현장A)" style="flex:1">
+        <button class="btn primary" onclick="saveCfg()">이름으로 저장</button>
+      </div>
+      <div class="row">
+        <select id="cfgSel" style="flex:1"></select>
+        <button class="btn" onclick="loadCfg()">불러오기</button>
+        <button class="btn" onclick="resetCfg()">기본값</button>
+      </div>
+      <p class="hint">저장 위치 <code>configs/exhibit/&lt;이름&gt;.json</code>. 현재 값은 항상 <code>webui/exhibit_config.json</code>에도 저장되어 다음 실행에 자동 적용됩니다.</p>
+    </div>
+  </div>
+</main>
+<div id="toast"></div>
+
+<script>
+/* ---------- basics ---------- */
+let inferOn = true, modes = null, rtCache = null;
+function toast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.style.opacity = 1;
+  setTimeout(() => t.style.opacity = 0, 1800);
+}
+async function api(path, body) {
+  const r = await fetch(path, body === undefined ? {} :
+    { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body) });
+  return r.json();
+}
+const pending = {};
+function postOpt(key, value) {
+  pending[key] = value;
+  clearTimeout(postOpt._t);
+  postOpt._t = setTimeout(() => {
+    const batch = {...pending};
+    for (const k in pending) delete pending[k];
+    api('/api/config', batch).then(() => api('/api/config/save', {}));
+  }, 150);
+}
+const $ = id => document.getElementById(id);
+async function toggleInfer() {
+  inferOn = !inferOn;
+  await api('/api/pipeline', { infer: inferOn });
+  $('inferBtn').textContent = inferOn ? 'OSC 일시정지' : 'OSC 재개';
+  $('inferBtn').className = inferOn ? 'btn primary' : 'btn danger';
+}
+
+/* ---------- reacTIVision panel ---------- */
+const RTV_TEXT = ['rtv_exposure','rtv_gain','rtv_brightness','rtv_contrast','rtv_gamma','rtv_sharpness',
+  'rtv_focus','rtv_shutter','rtv_frame_width','rtv_frame_height','rtv_tree','rtv_calib_file',
+  'rtv_calib_invert','rtv_exe','rtv_display','rtv_engine'];
+const RTV_NUM = ['rtv_xoff','rtv_yoff','rtv_gradient','rtv_tile','rtv_finger_size',
+  'rtv_finger_sensitivity','rtv_tuio_port'];
+const RTV_BOOL = ['rtv_equalize','rtv_no_window','rtv_autostart'];
+
+async function loadRtvModes(refresh) {
+  const d = await api('/api/rtv/modes' + (refresh ? '?refresh=1' : ''));
+  modes = d;
+  const sel = $('rtvCam');
+  sel.innerHTML = '';
+  if (d.error) toast('카메라 목록: ' + d.error);
+  for (const c of d.cameras) {
+    const o = document.createElement('option');
+    o.value = c.index; o.textContent = `[${c.index}] ${c.name}`;
+    sel.appendChild(o);
+  }
+  if (rtCache) sel.value = rtCache.rtv_camera;
+  if (!sel.value && d.cameras.length) sel.value = d.cameras[0].index;
+  fillRes();
+  if (refresh) toast(d.restarted ? '목록 갱신 — reacTIVision을 잠시 멈췄다가 다시 시작' : '목록 갱신');
+  if (d.stale) toast('카메라 사용 중: 마지막으로 읽은 모드 목록 사용');
+}
+function curCam() {
+  if (!modes) return null;
+  return modes.cameras.find(c => String(c.index) === String($('rtvCam').value)) || null;
+}
+let lastFormat = null;   // "1280x800@120" as reported by the running reacTIVision
+function currentMode() {
+  // the configured mode, else the mode reacTIVision is actually running
+  if (rtCache && rtCache.rtv_width > 0)
+    return { w: rtCache.rtv_width, h: rtCache.rtv_height, fps: rtCache.rtv_fps,
+             codec: rtCache.rtv_compress ? 'MJPG' : 'YUY2' };
+  const m = lastFormat && lastFormat.match(/^(\d+)x(\d+)@(\d+)$/);
+  if (m) return { w: +m[1], h: +m[2], fps: +m[3], codec: (rtCache && rtCache.rtv_compress === false) ? 'YUY2' : 'MJPG' };
+  return null;
+}
+function fillRes() {
+  const cam = curCam(), sel = $('rtvRes');
+  sel.innerHTML = '';
+  if (!cam || !cam.formats.some(f => f.modes.length)) {
+    // no enumeration (camera held by another program): keep the configured /
+    // running mode selectable so 적용 does not silently drop it; ↺ re-reads
+    const cur = currentMode();
+    if (cur) {
+      const o = document.createElement('option');
+      o.value = `${cur.w}x${cur.h}|${cur.codec}`;
+      o.textContent = `${cur.w}x${cur.h} · ${cur.codec} (현재)`;
+      sel.appendChild(o);
+    }
+    fillFps(); return;
+  }
+  const fmts = [...cam.formats].sort((a, b) => (a.codec === 'MJPG' ? 0 : 1) - (b.codec === 'MJPG' ? 0 : 1));
+  for (const f of fmts) for (const m of f.modes) {
+    const o = document.createElement('option');
+    o.value = `${m.w}x${m.h}|${f.codec}`;
+    o.textContent = `${m.w}x${m.h} · ${f.codec}` + (f.codec === 'MJPG' ? '' : ' (비압축)');
+    sel.appendChild(o);
+  }
+  // preselect: saved mode, else the camera default
+  let want = null;
+  if (rtCache && rtCache.rtv_width > 0) {
+    want = `${rtCache.rtv_width}x${rtCache.rtv_height}|${rtCache.rtv_compress ? 'MJPG' : 'YUY2'}`;
+  } else if (cam.default) {
+    want = `${cam.default.w}x${cam.default.h}|${cam.default.codec}`;
+  }
+  if (want && [...sel.options].some(o => o.value === want)) sel.value = want;
+  fillFps();
+}
+function fillFps() {
+  const cam = curCam(), sel = $('rtvFps');
+  sel.innerHTML = '';
+  if (!cam || !$('rtvRes').value) return;
+  const [wh, codec] = $('rtvRes').value.split('|');
+  const [w, h] = wh.split('x').map(Number);
+  const f = cam.formats.find(x => x.codec === codec);
+  const m = f && f.modes.find(x => x.w === w && x.h === h);
+  let list = m ? m.fps : [];
+  if (!list.length) { const cur = currentMode(); if (cur) list = [cur.fps]; }  // no enumeration
+  for (const v of list) {
+    const o = document.createElement('option'); o.value = v; o.textContent = v + ' fps';
+    sel.appendChild(o);
+  }
+  const want = rtCache && rtCache.rtv_width > 0 ? rtCache.rtv_fps : 120;
+  if (list.includes(want)) sel.value = want;
+  else if (list.includes(120)) sel.value = 120;
+  else if (list.length) sel.value = Math.max(...list);
+}
+function fillRtvForm(rt) {
+  rtCache = rt;
+  for (const k of RTV_TEXT) if ($(k)) $(k).value = rt[k] ?? '';
+  for (const k of RTV_NUM) if ($(k)) $(k).value = rt[k] ?? 0;
+  for (const k of RTV_BOOL) if ($(k)) $(k).checked = !!rt[k];
+  if (modes) { $('rtvCam').value = rt.rtv_camera; fillRes(); }
+}
+function collectRtv() {
+  const out = {};
+  for (const k of RTV_TEXT) if ($(k)) out[k] = $(k).value.trim();
+  for (const k of RTV_NUM) if ($(k)) out[k] = +$(k).value;
+  for (const k of RTV_BOOL) if ($(k)) out[k] = $(k).checked;
+  out.rtv_camera = +($('rtvCam').value || 0);
+  if ($('rtvRes').value) {
+    const [wh, codec] = $('rtvRes').value.split('|');
+    const [w, h] = wh.split('x').map(Number);
+    out.rtv_width = w; out.rtv_height = h; out.rtv_compress = (codec === 'MJPG');
+  }
+  if ($('rtvFps').value) out.rtv_fps = +$('rtvFps').value;
+  // numeric-looking camera settings go as ints, keep default/min/max as text
+  for (const k of ['rtv_exposure','rtv_gain','rtv_brightness','rtv_contrast','rtv_gamma','rtv_sharpness','rtv_focus','rtv_shutter']) {
+    const v = out[k]; if (v !== '' && !isNaN(v)) out[k] = parseInt(v, 10);
+    if (v === '') out[k] = 'default';
+  }
+  return out;
+}
+async function applyRtv() {
+  const st = await api('/api/rtv/apply', collectRtv());
+  await api('/api/config/save', {});
+  toast('적용 — reacTIVision 재시작');
+  renderRtvStatus(st);
+}
+async function rtvCtl(a) {
+  const st = await api('/api/rtv/' + a, {});
+  toast(a === 'start' ? 'reacTIVision 시작' : 'reacTIVision 정지');
+  renderRtvStatus(st);
+}
+async function rtvImport() {
+  const r = await api('/api/rtv/import', {});
+  if (!r.ok) return toast('가져오기 실패: ' + r.error);
+  const st = await api('/api/state');
+  fillRtvForm(st.runtime);
+  toast(`XML 가져옴 (${Object.keys(r.imported).length}개 값)`);
+}
+function renderRtvStatus(st) {
+  const el = $('rtvStatus');
+  if (!st) return;
+  const parts = [];
+  parts.push(st.running ? `<b class="ok">실행중</b> pid ${st.pid}` : '<b class="bad">정지</b>');
+  if (st.format) parts.push(`${st.format}${st.format_source === 'stdout' ? '' : ' (설정값)'}`);
+  if (st.camera) parts.push(st.camera);
+  parts.push(`TUIO :${st.tuio_port ?? '-'} ${st.tuio_fps ?? 0}fps`);
+  parts.push(`오브제 ${st.objects ? st.objects.length : 0}`);
+  if (!st.exe_found) parts.push('<span class="bad">exe 없음</span>');
+  if (st.error) parts.push(`<span class="bad">${st.error}</span>`);
+  if (st.tuio_error) parts.push(`<span class="bad">${st.tuio_error}</span>`);
+  el.innerHTML = parts.join(' · ');
+  el.className = (st.error || st.tuio_error || !st.running) ? 'bad' : 'ok';
+  if (st.format) {
+    const first = !lastFormat;
+    lastFormat = st.format;
+    if (first && !$('rtvRes').options.length) fillRes();   // list was empty: show the running mode
+  }
+  $('rtvBadge').textContent = 'reacTIVision ' + (st.running ? (st.format || '실행') : '정지');
+  $('rtvBadge').className = 'badge ' + (st.running && !st.error ? 'ok' : 'bad');
+  $('tuioBadge').textContent = `TUIO ${st.tuio_fps ?? 0}fps`;
+  $('tuioBadge').className = 'badge ' + ((st.tuio_fps || 0) > 1 ? 'ok' : '');
+}
+async function pollLog() {
+  if (!$('logDetails').open) return;
+  const d = await api('/api/rtv/log');
+  const pre = $('rtvLog');
+  pre.textContent = (d.log || []).join('\n');
+  pre.scrollTop = pre.scrollHeight;
+}
+
+/* ---------- OSC targets ---------- */
+function renderTargets(list) {
+  const tb = $('tgtTbl').querySelector('tbody');
+  tb.innerHTML = '';
+  (list || []).forEach((t, i) => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td><input type="text" value="${t.name}"></td>
+      <td><input type="text" value="${t.host}" style="width:110px"></td>
+      <td><input type="number" value="${t.port}" style="width:72px"></td>
+      <td><select><option value="list">리스트</option><option value="dict">딕셔너리</option><option value="json">JSON</option></select></td>
+      <td><input type="checkbox" ${t.enabled ? 'checked' : ''}></td>
+      <td><button class="btn small" title="삭제">✕</button></td>`;
+    tr.querySelector('select').value = t.format;
+    tr.querySelector('button').onclick = () => { tr.remove(); };
+    tb.appendChild(tr);
+  });
+}
+function readTargets() {
+  return [...$('tgtTbl').querySelectorAll('tbody tr')].map(tr => {
+    const c = tr.querySelectorAll('td');
+    return { name: c[0].querySelector('input').value, host: c[1].querySelector('input').value,
+             port: +c[2].querySelector('input').value, format: c[3].querySelector('select').value,
+             enabled: c[4].querySelector('input').checked };
+  });
+}
+function addTarget() {
+  const cur = readTargets();
+  cur.push({ name: `target${cur.length + 1}`, host: '127.0.0.1', port: 9000, format: 'list', enabled: true });
+  renderTargets(cur);
+}
+function applyTargets() { postOpt('osc_targets', readTargets()); toast('OSC 대상 적용'); }
+
+/* ---------- form sync from runtime ---------- */
+function fillForm(rt) {
+  fillRtvForm(rt);
+  $('tension_contact').value = rt.tension_contact;
+  $('object_side_px').value = rt.object_side_px;
+  $('tension_connect').value = rt.tension_connect;
+  $('tension_fold').value = rt.tension_fold;
+  $('tension_knn').value = rt.tension_knn;
+  $('tension_link_radius').value = rt.tension_link_radius;
+  $('show_graph').checked = !!rt.show_graph;
+  $('osc_enabled').checked = !!rt.osc_enabled;
+  $('osc_prefix').value = rt.osc_prefix;
+  renderTargets(rt.osc_targets);
+}
+
+/* ---------- profiles ---------- */
+async function loadConfigs() {
+  const d = await api('/api/configs');
+  const sel = $('cfgSel');
+  sel.innerHTML = '';
+  for (const n of d.configs) {
+    const o = document.createElement('option'); o.value = n; o.textContent = n; sel.appendChild(o);
+  }
+  if (d.active) sel.value = d.active;
+}
+async function saveCfg() {
+  const name = $('cfgName').value.trim();
+  if (!name) return toast('이름을 입력하세요');
+  const r = await api('/api/config/save', { name });
+  await loadConfigs(); $('cfgSel').value = r.name;
+  toast(`저장됨: ${r.name}`);
+}
+async function loadCfg() {
+  const name = $('cfgSel').value;
+  if (!name) return;
+  const r = await api('/api/config/load', { name });
+  if (!r.ok) return toast('불러오기 실패');
+  const st = await api('/api/state'); fillForm(st.runtime);
+  toast(`불러옴: ${name} (reacTIVision 재시작)`);
+}
+async function resetCfg() {
+  await api('/api/config/reset', {}); await api('/api/config/save', {});
+  const st = await api('/api/state'); fillForm(st.runtime);
+  toast('기본값 복원');
+}
+
+/* ---------- ROI / side drag on the preview ---------- */
+let dragPurpose = null, roiStart = null;
+const roiLayer = $('roiLayer'), roiRectEl = $('roiRect');
+function setDragMode(purpose) {
+  dragPurpose = (dragPurpose === purpose) ? null : purpose;
+  roiLayer.classList.toggle('active', !!dragPurpose);
+  $('roiBtn').classList.toggle('primary', dragPurpose === 'roi');
+  $('roiBtn').textContent = dragPurpose === 'roi' ? '지정 취소' : '테이블 영역 지정';
+  $('calBtn').classList.toggle('primary', dragPurpose === 'calibrate');
+  $('calBtn').textContent = dragPurpose === 'calibrate' ? '측정 취소' : '한 변 측정';
+  if (dragPurpose === 'roi') toast('미리보기 위에서 드래그해 테이블 영역을 지정하세요');
+  if (dragPurpose === 'calibrate') toast('오브제 한 변의 시작점→끝점을 드래그하세요');
+}
+async function clearRoi() { await api('/api/roi', { roi: null }); await api('/api/config/save', {}); toast('영역 지움'); }
+function imgRect() { return $('stream').getBoundingClientRect(); }
+roiLayer.addEventListener('mousedown', e => {
+  if (!dragPurpose) return;
+  roiStart = { x: e.clientX, y: e.clientY };
+  roiRectEl.style.display = 'block'; e.preventDefault();
+});
+window.addEventListener('mousemove', e => {
+  if (!roiStart) return;
+  const r = imgRect(), vb = roiLayer.getBoundingClientRect();
+  const x1 = Math.max(r.left, Math.min(roiStart.x, e.clientX)), y1 = Math.max(r.top, Math.min(roiStart.y, e.clientY));
+  const x2 = Math.min(r.right, Math.max(roiStart.x, e.clientX)), y2 = Math.min(r.bottom, Math.max(roiStart.y, e.clientY));
+  roiRectEl.style.left = (x1 - vb.left) + 'px'; roiRectEl.style.top = (y1 - vb.top) + 'px';
+  roiRectEl.style.width = Math.max(0, x2 - x1) + 'px'; roiRectEl.style.height = Math.max(0, y2 - y1) + 'px';
+});
+window.addEventListener('mouseup', async e => {
+  if (!roiStart) return;
+  const s = roiStart; roiStart = null; roiRectEl.style.display = 'none';
+  const r = imgRect();
+  const x1 = Math.max(r.left, Math.min(s.x, e.clientX)), y1 = Math.max(r.top, Math.min(s.y, e.clientY));
+  const x2 = Math.min(r.right, Math.max(s.x, e.clientX)), y2 = Math.min(r.bottom, Math.max(s.y, e.clientY));
+  const purpose = dragPurpose;
+  if (purpose === 'calibrate') {
+    if (Math.hypot(x2 - x1, y2 - y1) < 8) return toast('너무 짧습니다');
+    const res = await api('/api/calibrate', {
+      x1: (x1 - r.left) / r.width, y1: (y1 - r.top) / r.height,
+      x2: (x2 - r.left) / r.width, y2: (y2 - r.top) / r.height });
+    setDragMode('calibrate');
+    if (res.ok) { $('object_side_px').value = res.object_side_px; await api('/api/config/save', {}); }
+    return toast(res.ok ? `한 변 = ${res.object_side_px}px` : '측정 실패: ' + res.error);
+  }
+  if (x2 - x1 < 8 || y2 - y1 < 8) return toast('영역이 너무 작습니다');
+  const roi = [(x1 - r.left) / r.width, (y1 - r.top) / r.height, (x2 - x1) / r.width, (y2 - y1) / r.height];
+  await api('/api/roi', { roi }); await api('/api/config/save', {});
+  setDragMode('roi'); toast('테이블 영역 설정됨');
+});
+
+/* ---------- polling ---------- */
+async function poll() {
+  try {
+    const st = await api('/api/state');
+    const res = st.results, rt = st.runtime;
+    renderRtvStatus(st.rtv);
+    const ob = $('oscBadge');
+    if (rt.osc_enabled && res.osc_fps > 0) {
+      ob.textContent = `OSC ${res.osc_fps}fps · ${res.osc_msgs}msg`; ob.className = 'badge ok';
+    } else { ob.textContent = rt.osc_enabled ? 'OSC 대기' : 'OSC 끔'; ob.className = 'badge'; }
+    $('chipObjs').textContent = '오브제 ' + res.objects.length;
+    $('chipSize').textContent = res.size[0] + 'x' + res.size[1];
+    $('chipTension').textContent = '긴장 기준 ' + (st.tension_basis || '-');
+    $('roiBadge').textContent = rt.roi ? `영역 ${rt.roi.map(v => v.toFixed(2)).join(', ')}` : '영역 없음';
+    $('roiBadge').className = 'badge ' + (rt.roi ? 'ok' : '');
+    $('calBadge').textContent = rt.object_side_px > 0 ? `한 변 ${rt.object_side_px}px` : '크기 미설정';
+    $('calBadge').className = 'badge ' + (rt.object_side_px > 0 ? 'ok' : 'info');
+    $('error').textContent = res.error || '';
+    const tb = $('objTbl').querySelector('tbody');
+    tb.innerHTML = res.objects.map(o =>
+      `<tr><td class="mono">#${o.id}</td><td>${o.track}</td><td>${o.x}</td><td>${o.y}</td><td>${o.angle}°</td><td>${o.tension}</td></tr>`
+    ).join('') || '<tr><td colspan="6" class="dim">인식된 피듀셜 없음</td></tr>';
+    const ot = $('oscTbl').querySelector('tbody');
+    ot.innerHTML = (res.osc || []).slice(0, 40).map(r =>
+      `<tr><td>${r[2] || ''}</td><td class="mono">${r[0]}</td><td class="mono">${r[1]}</td></tr>`
+    ).join('') || '<tr><td colspan="3" class="dim">송신 없음</td></tr>';
+    $('oscFieldOrder').textContent = '리스트 순서: ' + (st.osc_fields || []).map((f, i) => `${i}:${f}`).join('  ');
+    if (res.infer !== inferOn) { inferOn = res.infer; $('inferBtn').textContent = inferOn ? 'OSC 일시정지' : 'OSC 재개'; }
+  } catch (e) { $('error').textContent = '서버 연결 끊김'; }
+}
+
+async function init() {
+  const st = await api('/api/state');
+  fillForm(st.runtime);
+  await loadRtvModes(false);
+  await loadConfigs();
+  poll();
+  setInterval(poll, 500);
+  setInterval(pollLog, 2000);
+}
+init();
+</script>
+</body>
+</html>

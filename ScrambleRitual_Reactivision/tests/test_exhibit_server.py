@@ -231,6 +231,52 @@ class TestTuioRebind(unittest.TestCase):
             p.tuio.stop()
 
 
+class TestContactDistance(unittest.TestCase):
+    """The d_near basis is set by changing tension_contact only; the tension
+    logic (tension_thresholds / tension_graph) is untouched."""
+
+    def make(self, roi=None):
+        p = bare_pipeline({**X.EXHIBIT_DEFAULTS, "roi": roi})
+        p._size = (1280, 800)
+        p._last_objs = []
+        return p
+
+    def test_measure_contact_uses_closest_pair_and_roi_long_side(self):
+        p = self.make(roi=[0.0, 0.0, 0.5, 0.5])          # ROI 640x400 -> long side 640
+        p._last_objs = [obj(1, 4, 100, 100), obj(2, 9, 164, 100), obj(3, 2, 600, 700)]
+        r = p.measure_contact()
+        self.assertTrue(r["ok"])
+        self.assertAlmostEqual(r["tension_contact"], 64 / 640, places=4)
+        self.assertEqual(sorted(r["ids"]), [4, 9])
+        self.assertEqual(p.rt["tension_contact"], r["tension_contact"])
+        self.assertEqual(p.rt["object_side_px"], 0.0)
+        self.assertEqual(p.rt["tension_contact_src"], "measured")
+        # the stored value is exactly what tension_thresholds will use
+        from tracker.tension import tension_thresholds
+        d_near, d_far, src = tension_thresholds(p.rt, p.rt["object_side_px"], 640)
+        self.assertAlmostEqual(d_near, 0.1, places=4)
+        self.assertEqual(d_far, 0.5)
+
+    def test_measure_contact_needs_two_objects(self):
+        p = self.make()
+        self.assertFalse(p.measure_contact()["ok"])
+        p._last_objs = [obj(1, 4, 100, 100)]
+        self.assertFalse(p.measure_contact()["ok"])
+        p._size = (0, 0)
+        self.assertFalse(p.measure_contact()["ok"])
+
+    def test_physical_fallback(self):
+        p = self.make()
+        r = p.contact_from_physical(120, 1200)
+        self.assertTrue(r["ok"])
+        self.assertAlmostEqual(r["tension_contact"], 120 / 3 ** 0.5 / 1200, places=4)
+        self.assertEqual((p.rt["object_side_mm"], p.rt["table_long_mm"]), (120.0, 1200.0))
+        self.assertEqual(p.rt["tension_contact_src"], "physical")
+        self.assertFalse(p.contact_from_physical(0, 1200)["ok"])
+        self.assertFalse(p.contact_from_physical(1300, 1200)["ok"])
+        self.assertFalse(p.contact_from_physical("x", 1200)["ok"])
+
+
 class TestOverlay(unittest.TestCase):
     def test_draws_without_error(self):
         rt = dict(X.EXHIBIT_DEFAULTS)

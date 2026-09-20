@@ -71,8 +71,13 @@ EXHIBIT_DEFAULTS = {
     "osc_targets": [dict(t) for t in DEFAULT_OSC_TARGETS],
     # table region (normalized [x, y, w, h] of the camera frame) and object size
     "roi": None,
-    "object_side_px": 0.0,       # measured triangle side (canvas px); 0 = fallback
-    "tension_contact": 0.06,     # fallback d_near when the size is unknown
+    "object_side_px": 0.0,       # measured triangle side (canvas px); 0 = use tension_contact
+    "tension_contact": 0.06,     # d_near (normalized by the table long side) when side_px is 0
+    # how tension_contact was set: measured (two touching markers) | physical
+    # (object_side_mm / table_long_mm) | manual (typed / default) — display only
+    "tension_contact_src": "manual",
+    "object_side_mm": 0.0,       # physical object side, for the "physical" method
+    "table_long_mm": 0.0,        # physical table long side (= ROI long side)
     # tension graph knobs
     "tension_connect": "mst",    # mst (최소 신장 트리, 기본) | all | near | knn
     "tension_fold": "max",       # max | avg | min
@@ -224,6 +229,7 @@ class ExhibitPipeline(threading.Thread):
         self._osc_last_t = None
         self._overlay_last = 0.0
         self._size = (0, 0)
+        self._last_objs = []        # last TUIO objects with canvas cx/cy (for measurements)
         self.active_name = ""
         self.running = True
 
@@ -352,6 +358,63 @@ class ExhibitPipeline(threading.Thread):
         with self.lock:
             self.rt["object_side_px"] = round(side, 1)
         return {"ok": True, "object_side_px": round(side, 1)}
+
+    def _table_long_px(self, rt, W, H):
+        roi_px = roi_to_px(rt.get("roi"), W, H)
+        if roi_px:
+            x1, y1, x2, y2 = roi_px
+            return max(x2 - x1, y2 - y1, 1)
+        return max(W, H, 1)
+
+    def measure_contact(self):
+        """Two markers placed edge-to-edge: their centre distance (normalized by
+        the table long side) IS d_near, so store it as tension_contact. Uses the
+        closest pair of the objects currently visible. Only the variable
+        changes; the tension curve / graph logic stays as is."""
+        W, H = self._size
+        objs = list(self._last_objs)
+        if not W or not H:
+            return {"ok": False, "error": "아직 캔버스가 없습니다"}
+        if len(objs) < 2:
+            return {"ok": False, "error": "마커 2개를 변끼리 맞닿게 올려 두세요 (지금 보이는 마커: %d개)" % len(objs)}
+        best = None
+        for i in range(len(objs)):
+            for j in range(i + 1, len(objs)):
+                d = math.hypot(objs[i].cx - objs[j].cx, objs[i].cy - objs[j].cy)
+                if best is None or d < best[0]:
+                    best = (d, objs[i], objs[j])
+        d_px, a, b = best
+        if d_px < 2:
+            return {"ok": False, "error": "두 마커가 같은 위치로 읽힙니다"}
+        rt = self._rt_view()
+        contact = round(d_px / self._table_long_px(rt, W, H), 4)
+        with self.lock:
+            self.rt["tension_contact"] = contact
+            self.rt["object_side_px"] = 0.0          # the measured contact wins
+            self.rt["tension_contact_src"] = "measured"
+        return {"ok": True, "tension_contact": contact, "distance_px": round(d_px, 1),
+                "ids": [a.code_id, b.code_id]}
+
+    def contact_from_physical(self, side_mm, table_mm):
+        """Manual fallback: object side and table long side in mm ->
+        tension_contact = (side / sqrt3) / table (pure ratio, camera-free)."""
+        try:
+            side_mm, table_mm = float(side_mm), float(table_mm)
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "숫자를 입력하세요"}
+        if side_mm <= 0 or table_mm <= 0:
+            return {"ok": False, "error": "오브제 한 변과 테이블 긴 변(mm)을 모두 입력하세요"}
+        if side_mm >= table_mm:
+            return {"ok": False, "error": "오브제 한 변이 테이블 긴 변보다 큽니다"}
+        from tracker.tension import TRI_MIN_CENTER_FACTOR
+        contact = round(side_mm * TRI_MIN_CENTER_FACTOR / table_mm, 4)
+        with self.lock:
+            self.rt["object_side_mm"] = side_mm
+            self.rt["table_long_mm"] = table_mm
+            self.rt["tension_contact"] = contact
+            self.rt["object_side_px"] = 0.0
+            self.rt["tension_contact_src"] = "physical"
+        return {"ok": True, "tension_contact": contact}
 
     # -- reacTIVision control (Flask threads only set flags) ---------------
 
@@ -487,6 +550,7 @@ class ExhibitPipeline(threading.Thread):
                     objs = []
                 for o in objs:
                     o.cx, o.cy = o.nx * W, o.ny * H
+                self._last_objs = objs
                 roi_px = roi_to_px(rt.get("roi"), W, H)
                 osc_log = self._send_osc(rt, objs, (W, H), roi_px, send=got and self.infer_on)
                 now = time.monotonic()
@@ -670,6 +734,15 @@ def make_app(pipe):
     def roi():
         body = request.get_json(force=True) or {}
         return jsonify({"ok": True, "roi": pipe.set_roi(body.get("roi"))})
+
+    @app.post("/api/tension/measure_contact")
+    def tension_measure_contact():
+        return jsonify(pipe.measure_contact())
+
+    @app.post("/api/tension/physical")
+    def tension_physical():
+        b = request.get_json(force=True) or {}
+        return jsonify(pipe.contact_from_physical(b.get("object_side_mm"), b.get("table_long_mm")))
 
     @app.post("/api/calibrate")
     def calibrate():

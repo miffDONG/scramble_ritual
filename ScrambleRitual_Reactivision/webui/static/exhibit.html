@@ -207,14 +207,29 @@
     </div>
 
     <div class="card">
-      <h2><span class="step">2</span>테이블 영역 · 오브제 크기</h2>
-      <p class="hint">테이블 영역(ROI)을 지정하면 x, y가 테이블 기준 0~1로 정규화됩니다. 카메라를 옮겨도 같은 배치 = 같은 값. 오브제 한 변을 측정하면 긴장도 1의 거리가 오브제 크기에서 유도됩니다.</p>
-      <div class="grid">
-        <label title="오브제 크기를 측정하지 않았을 때 긴장도 1이 되는 거리 (테이블 긴 변 기준 0~1)">폴백 접촉거리</label>
-        <input type="number" id="tension_contact" step="0.01" min="0.01" max="0.5" onchange="postOpt('tension_contact', +this.value)">
-        <label title="측정된 오브제 한 변 (캔버스 px). 0이면 폴백 사용">한 변 px</label>
-        <input type="number" id="object_side_px" step="1" min="0" onchange="postOpt('object_side_px', +this.value)">
+      <h2><span class="step">2</span>테이블 영역 · 접촉 거리</h2>
+      <p class="hint">테이블 영역(ROI)을 먼저 지정하세요(x, y와 거리의 기준). 긴장도 1이 되는 거리(접촉 거리)는 아래 두 방법 중 하나로 정합니다.</p>
+      <label class="flabel">① 접촉 측정 (기본) — 마커 2개를 변끼리 맞닿게 올린 뒤 클릭</label>
+      <div class="row">
+        <button class="btn primary" onclick="measureContact()">접촉 거리 측정</button>
+        <span class="badge info" id="contactBadge">접촉 -</span>
       </div>
+      <label class="flabel">② 실측 치수 (폴백) — 카메라와 무관한 비율</label>
+      <div class="grid">
+        <label title="오브제(삼각형) 한 변의 실제 길이">오브제 한 변 mm</label>
+        <input type="number" id="object_side_mm" step="1" min="0">
+        <label title="테이블(ROI) 긴 변의 실제 길이">테이블 긴 변 mm</label>
+        <input type="number" id="table_long_mm" step="1" min="0">
+      </div>
+      <div class="row"><button class="btn" onclick="physicalContact()">치수로 계산</button></div>
+      <details><summary>직접 입력</summary>
+        <div class="body grid">
+          <label title="긴장도 1이 되는 중심거리 (테이블 긴 변 기준 0~1). 위 두 방법이 이 값을 채웁니다">접촉 거리</label>
+          <input type="number" id="tension_contact" step="0.001" min="0.005" max="0.5" onchange="postOpt('tension_contact', +this.value); postOpt('tension_contact_src', 'manual'); postOpt('object_side_px', 0)">
+          <label title="미리보기 드래그로 잰 한 변(캔버스 px). 0이면 접촉 거리 사용">한 변 px</label>
+          <input type="number" id="object_side_px" step="1" min="0" onchange="postOpt('object_side_px', +this.value)">
+        </div>
+      </details>
     </div>
 
     <div class="card">
@@ -495,11 +510,29 @@ function addTarget() {
 }
 function applyTargets() { postOpt('osc_targets', readTargets()); toast('OSC 대상 적용'); }
 
+/* ---------- contact distance (tension d_near) ---------- */
+async function measureContact() {
+  const r = await api('/api/tension/measure_contact', {});
+  if (!r.ok) return toast('측정 실패: ' + r.error);
+  await api('/api/config/save', {});
+  $('tension_contact').value = r.tension_contact; $('object_side_px').value = 0;
+  toast(`접촉 거리 = ${r.tension_contact} (id ${r.ids.join(' · ')}, ${r.distance_px}px)`);
+}
+async function physicalContact() {
+  const r = await api('/api/tension/physical', { object_side_mm: +$('object_side_mm').value, table_long_mm: +$('table_long_mm').value });
+  if (!r.ok) return toast('계산 실패: ' + r.error);
+  await api('/api/config/save', {});
+  $('tension_contact').value = r.tension_contact; $('object_side_px').value = 0;
+  toast(`접촉 거리 = ${r.tension_contact} (치수 기준)`);
+}
+
 /* ---------- form sync from runtime ---------- */
 function fillForm(rt) {
   fillRtvForm(rt);
   $('tension_contact').value = rt.tension_contact;
   $('object_side_px').value = rt.object_side_px;
+  $('object_side_mm').value = rt.object_side_mm || '';
+  $('table_long_mm').value = rt.table_long_mm || '';
   $('tension_connect').value = rt.tension_connect;
   $('tension_fold').value = rt.tension_fold;
   $('tension_knn').value = rt.tension_knn;
@@ -608,6 +641,9 @@ async function poll() {
     $('roiBadge').className = 'badge ' + (rt.roi ? 'ok' : '');
     $('calBadge').textContent = rt.object_side_px > 0 ? `한 변 ${rt.object_side_px}px` : '크기 미설정';
     $('calBadge').className = 'badge ' + (rt.object_side_px > 0 ? 'ok' : 'info');
+    const srcName = {measured: '접촉 측정', physical: '실측 치수', manual: '직접 입력'}[rt.tension_contact_src] || '';
+    $('contactBadge').textContent = rt.object_side_px > 0 ? '한 변 px 사용 중' : `접촉 ${rt.tension_contact} (${srcName})`;
+    $('contactBadge').className = 'badge ' + (rt.tension_contact_src === 'measured' || rt.tension_contact_src === 'physical' ? 'ok' : 'info');
     $('error').textContent = res.error || '';
     const tb = $('objTbl').querySelector('tbody');
     tb.innerHTML = res.objects.map(o =>

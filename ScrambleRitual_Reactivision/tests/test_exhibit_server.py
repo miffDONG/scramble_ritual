@@ -121,8 +121,9 @@ class TestSendOsc(unittest.TestCase):
         with mock.patch("pythonosc.udp_client.SimpleUDPClient", FakeClient):
             p._send_osc(rt, [obj(1, 2, 960, 600)], (1280, 800), (640, 400, 1280, 800))
         _, args = FakeClient.sent[("127.0.0.1", 57120)][0]
-        self.assertAlmostEqual(args[1], 0.5)
-        self.assertAlmostEqual(args[2], 0.5)
+        x_i, y_i = X.OSC_OBJ_FIELDS.index("x"), X.OSC_OBJ_FIELDS.index("y")
+        self.assertAlmostEqual(args[x_i], 0.5)
+        self.assertAlmostEqual(args[y_i], 0.5)
 
     def test_disabled_or_paused_sends_nothing_but_builds_graph(self):
         p = bare_pipeline(self.rt)

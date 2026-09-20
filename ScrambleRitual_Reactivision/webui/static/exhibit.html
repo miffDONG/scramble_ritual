@@ -490,7 +490,7 @@ function readTargets() {
 }
 function addTarget() {
   const cur = readTargets();
-  cur.push({ name: `target${cur.length + 1}`, host: '127.0.0.1', port: 9000, format: 'list', enabled: true });
+  cur.push({ name: `target${cur.length + 1}`, host: '127.0.0.1', port: 9000, format: 'json', enabled: true });
   renderTargets(cur);
 }
 function applyTargets() { postOpt('osc_targets', readTargets()); toast('OSC 대상 적용'); }

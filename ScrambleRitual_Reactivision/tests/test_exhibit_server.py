@@ -63,7 +63,8 @@ class TestOscFormatting(unittest.TestCase):
         self.assertEqual(t[0]["port"], 57120)
         self.assertTrue(t[0]["enabled"])
         self.assertEqual((t[1]["host"], t[1]["format"], t[1]["enabled"]),
-                         ("127.0.0.1", "list", False))
+                         ("127.0.0.1", "json", False))     # unknown format -> default json
+        self.assertTrue(all(t["format"] == "json" for t in X.DEFAULT_OSC_TARGETS))
 
     def test_object_freq(self):
         self.assertEqual(X.object_freq(7), ((7 * 5) % 12) - 6)

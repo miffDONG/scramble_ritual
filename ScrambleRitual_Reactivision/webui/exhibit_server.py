@@ -46,11 +46,14 @@ STATIC_DIR = os.path.join(HERE, "static")
 # `id` is the reacTIVision fiducial symbol id — the object's identity.
 OSC_OBJ_FIELDS = ["id", "x", "y", "tilt", "tension", "flip", "freq"]
 
+# Default payload format is JSON (one string argument: {"id": .., "x": .., ...});
+# per target it can be switched to list (positional) or dict (k, v, k, v ...).
+DEFAULT_OSC_FORMAT = "json"
 DEFAULT_OSC_TARGETS = [
     {"name": "SuperCollider", "host": "127.0.0.1", "port": 57120,
-     "format": "list", "enabled": True},
+     "format": DEFAULT_OSC_FORMAT, "enabled": True},
     {"name": "TouchDesigner", "host": "127.0.0.1", "port": 7000,
-     "format": "list", "enabled": True},
+     "format": DEFAULT_OSC_FORMAT, "enabled": True},
 ]
 
 EXHIBIT_DEFAULTS = {
@@ -122,9 +125,9 @@ def osc_targets(rt):
         except (TypeError, ValueError):
             continue
         host = str(t.get("host") or "127.0.0.1").strip() or "127.0.0.1"
-        fmt = str(t.get("format") or "list")
+        fmt = str(t.get("format") or DEFAULT_OSC_FORMAT)
         if fmt not in ("list", "dict", "json"):
-            fmt = "list"
+            fmt = DEFAULT_OSC_FORMAT
         out.append({"name": str(t.get("name") or f"target{i + 1}"), "host": host,
                     "port": port, "format": fmt, "enabled": bool(t.get("enabled", True))})
     return out

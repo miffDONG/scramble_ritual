@@ -555,7 +555,8 @@ class ExhibitPipeline(threading.Thread):
         log = self._send_osc(rt, objs, (W, H), roi_px, send=self.infer_on)
         self._last_objs = objs
         self._last_roi_px = roi_px
-        self._last_osc_log = log
+        if log is not None:            # None = monitor rows skipped this frame
+            self._last_osc_log = log
 
     # -- preview / UI loop (pipeline thread, OVERLAY_HZ) -----------------------
 
@@ -655,7 +656,14 @@ class ExhibitPipeline(threading.Thread):
         except Exception as exc:
             return [["osc", f"client error: {exc}", ""]]
         prefix = str(rt.get("osc_prefix", "/scramble")).rstrip("/")
-        log = []
+        # the monitor text (one row per message) is only needed at the UI
+        # rate; building it on every frame would cost more than the sends
+        # with 25 objects x 2 targets at 120 fps
+        now0 = time.perf_counter()
+        want_log = (now0 - getattr(self, "_log_last_t", 0.0)) >= 1.0 / self.OVERLAY_HZ
+        if want_log:
+            self._log_last_t = now0
+        log = [] if want_log else None
 
         def norm(v, origin, span):   # clamp so receivers always get 0..1
             return round(max(0.0, min(1.0, (v - origin) / span)), 4)
@@ -665,9 +673,11 @@ class ExhibitPipeline(threading.Thread):
                 args = format_osc_args(t["format"], OSC_OBJ_FIELDS, values)
                 try:
                     self._osc_clients[(t["host"], t["port"])].send_message(addr, args)
-                    log.append([addr, osc_args_text(t["format"], args), t["name"], t["format"]])
+                    if want_log:
+                        log.append([addr, osc_args_text(t["format"], args), t["name"], t["format"]])
                 except Exception as exc:
-                    log.append([addr, f"send error: {exc}", t["name"], t["format"]])
+                    if want_log:
+                        log.append([addr, f"send error: {exc}", t["name"], t["format"]])
 
         for o, t in zip(known, node_t):
             emit(f"{prefix}/obj",

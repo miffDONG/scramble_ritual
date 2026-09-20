@@ -119,8 +119,8 @@
       </tr></thead><tbody></tbody></table>
     </div>
     <div class="card" id="oscCard">
-      <h2>OSC 모니터</h2>
-      <table id="oscTbl"><thead><tr><th>대상</th><th>주소</th><th>값</th></tr></thead><tbody></tbody></table>
+      <h2>OSC 모니터 <span class="dim" style="font-weight:400;font-size:12px">— 전송된 인자 그대로 (형식별)</span></h2>
+      <table id="oscTbl"><thead><tr><th>대상</th><th>형식</th><th>주소</th><th>인자 (전송 그대로)</th></tr></thead><tbody></tbody></table>
     </div>
   </div>
 
@@ -614,9 +614,10 @@ async function poll() {
       `<tr><td class="mono">#${o.id}</td><td>${o.track}</td><td>${o.x}</td><td>${o.y}</td><td>${o.angle}°</td><td>${o.tension}</td></tr>`
     ).join('') || '<tr><td colspan="6" class="dim">인식된 피듀셜 없음</td></tr>';
     const ot = $('oscTbl').querySelector('tbody');
+    const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     ot.innerHTML = (res.osc || []).slice(0, 40).map(r =>
-      `<tr><td>${r[2] || ''}</td><td class="mono">${r[0]}</td><td class="mono">${r[1]}</td></tr>`
-    ).join('') || '<tr><td colspan="3" class="dim">송신 없음</td></tr>';
+      `<tr><td>${esc(r[2] || '')}</td><td class="dim">${esc(r[3] || '')}</td><td class="mono">${esc(r[0])}</td><td class="mono" style="white-space:pre-wrap;word-break:break-all">${esc(r[1])}</td></tr>`
+    ).join('') || '<tr><td colspan="4" class="dim">송신 없음</td></tr>';
     $('oscFieldOrder').textContent = '리스트 순서: ' + (st.osc_fields || []).map((f, i) => `${i}:${f}`).join('  ');
     if (res.infer !== inferOn) { inferOn = res.infer; $('inferBtn').textContent = inferOn ? 'OSC 일시정지' : 'OSC 재개'; }
   } catch (e) { $('error').textContent = '서버 연결 끊김'; }

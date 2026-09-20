@@ -50,8 +50,10 @@ class TestOscFormatting(unittest.TestCase):
         self.assertEqual(d[:4], ["id", 3, "x", 0.5])
         j = X.format_osc_args("json", X.OSC_OBJ_FIELDS, vals)
         self.assertEqual(json.loads(j[0])["id"], 3)
-        self.assertIn("id: 3", X.osc_args_text("dict", d))
-        self.assertEqual(X.osc_args_text("list", vals).split(", ")[0], "3")
+        # the monitor shows the arguments exactly as sent
+        self.assertEqual(json.loads(X.osc_args_text("dict", d)), d)
+        self.assertEqual(json.loads(X.osc_args_text("list", vals)), vals)
+        self.assertEqual(X.osc_args_text("json", j), j[0])
 
     def test_targets_normalized(self):
         rt = {"osc_targets": [

@@ -106,12 +106,12 @@ def format_osc_args(fmt, fields, values):
 
 
 def osc_args_text(fmt, args):
-    """Monitor text showing the payload as it is actually structured."""
-    if fmt == "dict":
-        return ", ".join(f"{args[i]}: {args[i + 1]}" for i in range(0, len(args) - 1, 2))
+    """Monitor text = the OSC arguments exactly as sent. json: the single
+    string argument itself; list/dict: the argument array (strings quoted,
+    ints and floats as transmitted)."""
     if fmt == "json":
         return str(args[0]) if args else ""
-    return ", ".join(str(a) for a in args)
+    return json.dumps(list(args), ensure_ascii=False)
 
 
 def osc_targets(rt):
@@ -577,9 +577,9 @@ class ExhibitPipeline(threading.Thread):
                 args = format_osc_args(t["format"], OSC_OBJ_FIELDS, values)
                 try:
                     self._osc_clients[(t["host"], t["port"])].send_message(addr, args)
-                    log.append([addr, osc_args_text(t["format"], args), t["name"]])
+                    log.append([addr, osc_args_text(t["format"], args), t["name"], t["format"]])
                 except Exception as exc:
-                    log.append([addr, f"send error: {exc}", t["name"]])
+                    log.append([addr, f"send error: {exc}", t["name"], t["format"]])
 
         for o, t in zip(known, node_t):
             emit(f"{prefix}/obj",

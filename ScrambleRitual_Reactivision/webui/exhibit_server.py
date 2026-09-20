@@ -230,6 +230,8 @@ class ExhibitPipeline(threading.Thread):
         self._overlay_last = 0.0
         self._size = (0, 0)
         self._last_objs = []        # last TUIO objects with canvas cx/cy (for measurements)
+        self._last_osc_log = []     # monitor rows from the last frame sent (receiver thread)
+        self._last_roi_px = None
         self.active_name = ""
         self.running = True
 
@@ -493,7 +495,7 @@ class ExhibitPipeline(threading.Thread):
 
     def _ensure(self, rt):
         port = int(rt["rtv_tuio_port"])
-        now = time.monotonic()
+        now = time.perf_counter()
         # a failed bind (e.g. the previous server instance still held the
         # port for a moment) is retried, otherwise TUIO would stay dead
         retry = (self.tuio is not None and self.tuio.error
@@ -503,7 +505,9 @@ class ExhibitPipeline(threading.Thread):
                 self.tuio.stop()
             self._tuio_try_t = now
             self.tuio = TuioReceiver(port=port,
-                                     angle_offset=float(rt.get("rtv_angle_offset", 0.0))).start()
+                                     angle_offset=float(rt.get("rtv_angle_offset", 0.0)))
+            self.tuio.on_frame = self._on_tuio_frame   # OSC goes out on the receiver thread
+            self.tuio.start()
             with self.lock:
                 self._tuio_dirty = False
         if self._rtv_dirty:
@@ -535,52 +539,70 @@ class ExhibitPipeline(threading.Thread):
             w, h = int(w * s), int(h * s)
         return max(w, 16), max(h, 16)
 
+    # -- per TUIO frame (runs on the receiver thread) -------------------------
+
+    def _on_tuio_frame(self, objs, fseq):
+        """Called by TuioReceiver right after each frame is committed. Does
+        only what the OSC output needs (canvas coords -> ROI -> tension ->
+        send), so OSC keeps up with reacTIVision's frame rate regardless of
+        what the preview/UI thread is doing."""
+        rt = self._rt_view()
+        W, H = self._canvas_size(rt)
+        self._size = (W, H)
+        for o in objs:
+            o.cx, o.cy = o.nx * W, o.ny * H
+        roi_px = roi_to_px(rt.get("roi"), W, H)
+        log = self._send_osc(rt, objs, (W, H), roi_px, send=self.infer_on)
+        self._last_objs = objs
+        self._last_roi_px = roi_px
+        self._last_osc_log = log
+
+    # -- preview / UI loop (pipeline thread, OVERLAY_HZ) -----------------------
+
     def run(self):
         while self.running:
             rt = self._rt_view()
             try:
                 self._ensure(rt)
-                got = self.tuio.wait_frame(0.1) if (self.tuio and not self.tuio.error) else False
-                if not got and (self.tuio is None or self.tuio.error):
-                    time.sleep(0.1)
+                time.sleep(max(0.0, 1.0 / self.OVERLAY_HZ - (time.perf_counter() - self._overlay_last)))
                 W, H = self._canvas_size(rt)
-                self._size = (W, H)
-                objs = self.tuio.snapshot() if self.tuio else []
-                if self.tuio and self.tuio.age() > float(rt.get("rtv_stale_s") or 1.0):
+                if not self._size[0]:
+                    self._size = (W, H)
+                objs = list(self._last_objs)
+                stale = self.tuio is None or self.tuio.age() > float(rt.get("rtv_stale_s") or 1.0)
+                if stale:                      # TUIO stopped: show (and report) nothing
                     objs = []
-                for o in objs:
-                    o.cx, o.cy = o.nx * W, o.ny * H
-                self._last_objs = objs
+                    self._graph = None
+                    self._last_node_t = {}
+                osc_log = [] if stale else list(self._last_osc_log)
                 roi_px = roi_to_px(rt.get("roi"), W, H)
-                osc_log = self._send_osc(rt, objs, (W, H), roi_px, send=got and self.infer_on)
-                now = time.monotonic()
-                if now - self._overlay_last >= 1.0 / self.OVERLAY_HZ:
-                    self._overlay_last = now
-                    st = self.rtv.status()
-                    st["error"] = st["error"] or (self.tuio.error if self.tuio else None)
-                    vis = draw_exhibit_overlay(W, H, objs, self._graph, st,
-                                               self.tuio.fps if self.tuio else 0.0,
-                                               roi_px, rt, self.infer_on)
-                    q = [cv2.IMWRITE_JPEG_QUALITY, int(rt.get("jpeg_quality") or 80)]
-                    if vis.shape[1] > self.PREVIEW_MAX_W:   # keep the loop fast
-                        s = self.PREVIEW_MAX_W / vis.shape[1]
-                        vis = cv2.resize(vis, (self.PREVIEW_MAX_W, int(vis.shape[0] * s)),
-                                         interpolation=cv2.INTER_AREA)
-                    jo = cv2.imencode(".jpg", vis, q)[1].tobytes()
-                    with self.lock:
-                        self.frames["overlay"] = jo
-                        self.frame_no += 1
-                        self.results = {
-                            "objects": [object_json(o, self._last_node_t.get(o.track_id, 0.0))
-                                        for o in objs],
-                            "tuio_fps": round(self.tuio.fps, 1) if self.tuio else 0.0,
-                            "size": [W, H],
-                            "infer": self.infer_on,
-                            "osc": osc_log,
-                            "osc_fps": round(self.osc_fps, 1),
-                            "osc_msgs": len(osc_log),
-                            "error": st.get("error"),
-                        }
+                self._overlay_last = time.perf_counter()
+                st = self.rtv.status()
+                st["error"] = (st["error"] or (self.tuio.error if self.tuio else None)
+                               or (self.tuio.on_frame_error if self.tuio else None))
+                vis = draw_exhibit_overlay(W, H, objs, self._graph, st,
+                                           self.tuio.fps if self.tuio else 0.0,
+                                           roi_px, rt, self.infer_on)
+                q = [cv2.IMWRITE_JPEG_QUALITY, int(rt.get("jpeg_quality") or 80)]
+                if vis.shape[1] > self.PREVIEW_MAX_W:   # cheap JPEG; OSC is not on this thread
+                    s = self.PREVIEW_MAX_W / vis.shape[1]
+                    vis = cv2.resize(vis, (self.PREVIEW_MAX_W, int(vis.shape[0] * s)),
+                                     interpolation=cv2.INTER_AREA)
+                jo = cv2.imencode(".jpg", vis, q)[1].tobytes()
+                with self.lock:
+                    self.frames["overlay"] = jo
+                    self.frame_no += 1
+                    self.results = {
+                        "objects": [object_json(o, self._last_node_t.get(o.track_id, 0.0))
+                                    for o in objs],
+                        "tuio_fps": round(self.tuio.fps, 1) if self.tuio else 0.0,
+                        "size": [W, H],
+                        "infer": self.infer_on,
+                        "osc": osc_log,
+                        "osc_fps": 0.0 if stale else round(self.osc_fps, 1),
+                        "osc_msgs": len(osc_log),
+                        "error": st.get("error"),
+                    }
             except Exception as exc:
                 with self.lock:
                     self.results["error"] = f"pipeline error: {exc}"
@@ -653,7 +675,7 @@ class ExhibitPipeline(threading.Thread):
                   norm(o.cx, ox, rw), norm(o.cy, oy, rh),
                   round(float(o.angle), 2), t])
 
-        now = time.monotonic()
+        now = time.perf_counter()
         if self._osc_last_t is not None:
             dt = now - self._osc_last_t
             if dt > 0:

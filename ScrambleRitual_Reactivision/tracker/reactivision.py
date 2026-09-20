@@ -743,6 +743,10 @@ class TuioReceiver:
         self.error = None
         self._server = None
         self._thread = None
+        #: optional callback(objects, fseq) run on the receiver thread right
+        #: after each frame is committed — the lowest-latency hook for OSC
+        self.on_frame = None
+        self.on_frame_error = None
 
     # -- lifecycle ------------------------------------------------------
 
@@ -804,7 +808,9 @@ class TuioReceiver:
             self._alive = None
             self.last_fseq = fseq
             self.frame_no += 1
-            now = time.monotonic()
+            # perf_counter, not monotonic: on Windows monotonic ticks every
+            # 15.6 ms, which caps a per-frame fps estimate at ~64
+            now = time.perf_counter()
             if self._last_t is not None:
                 dt = now - self._last_t
                 if dt > 0:
@@ -812,6 +818,13 @@ class TuioReceiver:
             self._last_t = now
             self.last_rx = now
             self._cond.notify_all()
+            objs = [replace(o) for _, o in sorted(merged.items())]
+        cb = self.on_frame
+        if cb is not None:                  # outside the lock: sending must not block readers
+            try:
+                cb(objs, fseq)
+            except Exception as exc:        # never let a send error kill the receiver
+                self.on_frame_error = str(exc)
 
     # -- pipeline side ----------------------------------------------------
 
@@ -831,4 +844,4 @@ class TuioReceiver:
         """Seconds since the last committed frame (inf before the first)."""
         if not self.last_rx:
             return float("inf")
-        return time.monotonic() - self.last_rx
+        return time.perf_counter() - self.last_rx

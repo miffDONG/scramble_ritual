@@ -231,6 +231,33 @@ class TestTuioRebind(unittest.TestCase):
             p.tuio.stop()
 
 
+class TestFrameCallback(unittest.TestCase):
+    def test_on_tuio_frame_sends_and_records(self):
+        FakeClient.sent = {}
+        rt = {**X.EXHIBIT_DEFAULTS, "osc_enabled": True, "roi": None}
+        p = bare_pipeline(rt)
+        p.rtv = mock.Mock(format=(1280, 800, 120))
+        p._size = (0, 0)
+        p.infer_on = True
+        objs = [X.ExhibitObject(track_id=1, code_id=4, nx=0.25, ny=0.5, angle=0.0),
+                X.ExhibitObject(track_id=2, code_id=9, nx=0.75, ny=0.5, angle=0.0)]
+        with mock.patch("pythonosc.udp_client.SimpleUDPClient", FakeClient):
+            p._on_tuio_frame(objs, 42)
+        self.assertEqual(p._size, (1280, 800))
+        self.assertEqual((objs[0].cx, objs[0].cy), (320.0, 400.0))   # canvas px filled in
+        self.assertEqual(len(FakeClient.sent[("127.0.0.1", 57120)]), 2)
+        self.assertEqual(len(p._last_osc_log), 4)                     # 2 objects x 2 targets
+        self.assertIs(p._last_objs, objs)
+        # paused: nothing sent, graph still computed
+        FakeClient.sent = {}
+        p.infer_on = False
+        with mock.patch("pythonosc.udp_client.SimpleUDPClient", FakeClient):
+            p._on_tuio_frame(objs, 43)
+        self.assertEqual(FakeClient.sent, {})
+        self.assertEqual(p._last_osc_log, [])
+        self.assertIsNotNone(p._graph)
+
+
 class TestContactDistance(unittest.TestCase):
     """The d_near basis is set by changing tension_contact only; the tension
     logic (tension_thresholds / tension_graph) is untouched."""

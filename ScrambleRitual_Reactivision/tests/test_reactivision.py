@@ -241,6 +241,22 @@ class TestTuio(unittest.TestCase):
         self.assertEqual(t.snapshot(), [])
         self.assertEqual(t.frame_no, 2)
 
+    def test_on_frame_callback_per_commit(self):
+        t = R.TuioReceiver()
+        got = []
+        t.on_frame = lambda objs, fseq: got.append((fseq, [o.code_id for o in objs]))
+        t._on_obj("/tuio/2Dobj", "set", 1, 3, 0.1, 0.1, 0, 0, 0, 0, 0, 0)
+        t._on_obj("/tuio/2Dobj", "alive", 1)
+        t._on_obj("/tuio/2Dobj", "fseq", 7)
+        t._on_obj("/tuio/2Dobj", "alive")
+        t._on_obj("/tuio/2Dobj", "fseq", 8)
+        self.assertEqual(got, [(7, [3]), (8, [])])
+        # a failing callback is recorded, never raised into the receiver
+        t.on_frame = lambda objs, fseq: 1 / 0
+        t._on_obj("/tuio/2Dobj", "fseq", 9)
+        self.assertIn("division", t.on_frame_error)
+        self.assertEqual(t.frame_no, 3)
+
     def test_snapshot_is_a_copy(self):
         t = R.TuioReceiver()
         t._on_obj("/tuio/2Dobj", "set", 1, 3, 0.1, 0.1, 0, 0, 0, 0, 0, 0)

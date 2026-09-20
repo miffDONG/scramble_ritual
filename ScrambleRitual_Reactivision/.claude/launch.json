@@ -14,6 +14,12 @@
       "port": 8765
     },
     {
+      "name": "exhibit-verify",
+      "runtimeExecutable": ".venv/Scripts/python.exe",
+      "runtimeArgs": ["-m", "webui.exhibit_server", "--no-rtv", "--port", "8766"],
+      "port": 8766
+    },
+    {
       "name": "conductor-demo",
       "runtimeExecutable": ".venv/Scripts/python.exe",
       "runtimeArgs": ["-m", "conductor.demo", "--seconds", "8"],

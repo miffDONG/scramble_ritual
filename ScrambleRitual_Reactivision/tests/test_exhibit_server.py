@@ -41,13 +41,19 @@ class TestOscFormatting(unittest.TestCase):
     def test_field_order(self):
         self.assertEqual(X.OSC_OBJ_FIELDS[0], "id")
         self.assertEqual(X.OSC_OBJ_FIELDS,
-                         ["id", "x", "y", "tilt", "tension", "flip", "freq"])
+                         ["id", "binary_id", "x", "y", "tilt", "tension", "flip", "freq"])
+
+    def test_binary_id(self):
+        self.assertEqual(X.binary_id(0), "00000000")
+        self.assertEqual(X.binary_id(12), "00001100")
+        self.assertEqual(X.binary_id(215), "11010111")
+        self.assertEqual(int(X.binary_id(97), 2), 97)
 
     def test_three_formats(self):
-        vals = [3, 0.5, 0.25, 90.0, 0.4, 0, -3.0]
+        vals = [3, "00000011", 0.5, 0.25, 90.0, 0.4, 0, -3.0]
         self.assertEqual(X.format_osc_args("list", X.OSC_OBJ_FIELDS, vals), vals)
         d = X.format_osc_args("dict", X.OSC_OBJ_FIELDS, vals)
-        self.assertEqual(d[:4], ["id", 3, "x", 0.5])
+        self.assertEqual(d[:4], ["id", 3, "binary_id", "00000011"])
         j = X.format_osc_args("json", X.OSC_OBJ_FIELDS, vals)
         self.assertEqual(json.loads(j[0])["id"], 3)
         # the monitor shows the arguments exactly as sent
@@ -98,6 +104,9 @@ class TestSendOsc(unittest.TestCase):
         self.assertEqual(ids_sc, [4, 9])
         self.assertEqual(ids_td, [4, 9])
         self.assertIsInstance(sc[0][1][0], int)
+        self.assertEqual(next(args[1] for _, args in sc if args[0] == 9), "00001001")
+        self.assertEqual(first_td_bin := json.loads(next(a[0] for _, a in td))["binary_id"],
+                         X.binary_id(json.loads(next(a[0] for _, a in td))["id"]))
         # same values on both targets
         first_sc = next(args for _, args in sc if args[0] == 9)
         first_td = json.loads(next(args[0] for _, args in td if json.loads(args[0])["id"] == 9))

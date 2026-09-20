@@ -115,7 +115,7 @@
     <div class="card">
       <h2>오브제 (피듀셜)</h2>
       <table id="objTbl"><thead><tr>
-        <th>ID</th><th>세션</th><th>x</th><th>y</th><th>tilt</th><th>tension</th>
+        <th>ID</th><th>binary_id</th><th>세션</th><th>x</th><th>y</th><th>tilt</th><th>tension</th>
       </tr></thead><tbody></tbody></table>
     </div>
     <div class="card" id="oscCard">
@@ -611,8 +611,8 @@ async function poll() {
     $('error').textContent = res.error || '';
     const tb = $('objTbl').querySelector('tbody');
     tb.innerHTML = res.objects.map(o =>
-      `<tr><td class="mono">#${o.id}</td><td>${o.track}</td><td>${o.x}</td><td>${o.y}</td><td>${o.angle}°</td><td>${o.tension}</td></tr>`
-    ).join('') || '<tr><td colspan="6" class="dim">인식된 피듀셜 없음</td></tr>';
+      `<tr><td class="mono">#${o.id}</td><td class="mono">${o.binary_id || ''}</td><td>${o.track}</td><td>${o.x}</td><td>${o.y}</td><td>${o.angle}°</td><td>${o.tension}</td></tr>`
+    ).join('') || '<tr><td colspan="7" class="dim">인식된 피듀셜 없음</td></tr>';
     const ot = $('oscTbl').querySelector('tbody');
     const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     ot.innerHTML = (res.osc || []).slice(0, 40).map(r =>

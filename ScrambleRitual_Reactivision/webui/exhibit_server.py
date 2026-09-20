@@ -44,7 +44,14 @@ STATIC_DIR = os.path.join(HERE, "static")
 
 # OSC payload field order (list format = these positions; dict/json = keys).
 # `id` is the reacTIVision fiducial symbol id — the object's identity.
-OSC_OBJ_FIELDS = ["id", "x", "y", "tilt", "tension", "flip", "freq"]
+OSC_OBJ_FIELDS = ["id", "binary_id", "x", "y", "tilt", "tension", "flip", "freq"]
+BINARY_ID_BITS = 8   # amoeba ids are 0..215 -> 8 bits, zero-padded ("00001100")
+
+
+def binary_id(code_id):
+    """Fiducial id as a fixed-width binary string (the Morse-era `bits`
+    field, now derived from the reacTIVision symbol number)."""
+    return format(int(code_id), f"0{BINARY_ID_BITS}b")
 
 # Default payload format is JSON (one string argument: {"id": .., "x": .., ...});
 # per target it can be switched to list (positional) or dict (k, v, k, v ...).
@@ -140,7 +147,8 @@ def object_freq(code_id):
 
 
 def object_json(o, tension=0.0):
-    return {"track": o.track_id, "id": o.code_id, "label": o.label,
+    return {"track": o.track_id, "id": o.code_id, "binary_id": binary_id(o.code_id),
+            "label": o.label,
             "x": round(o.nx, 4), "y": round(o.ny, 4),
             "cx": round(o.cx, 1), "cy": round(o.cy, 1),
             "angle": round(o.angle, 1), "tension": tension}
@@ -583,7 +591,8 @@ class ExhibitPipeline(threading.Thread):
 
         for o, t in zip(known, node_t):
             emit(f"{prefix}/obj",
-                 [int(o.code_id), norm(o.cx, ox, rw), norm(o.cy, oy, rh),
+                 [int(o.code_id), binary_id(o.code_id),
+                  norm(o.cx, ox, rw), norm(o.cy, oy, rh),
                   round(float(o.angle), 2), t, 1 if o.flip else 0,
                   round(object_freq(o.code_id), 2)])
 

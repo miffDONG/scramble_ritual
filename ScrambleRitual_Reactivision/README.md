@@ -42,7 +42,7 @@ scripts\exhibition_start.bat --no-rtv   :: reacTIVision을 직접 띄울 때
 ## OSC
 
 주소 `/scramble/obj` 하나, 오브제 1개당 1메시지, 카메라 프레임(TUIO fseq)마다.
-기본 형식은 **JSON**(인자 1개 = `{"id":…, "binary_id":"…", "x":…, "y":…, "tilt":…, "tension":…, "flip":…, "freq":…}`),
+기본 형식은 **JSON**(인자 1개 = `{"id":…, "bits":"…", "x":…, "y":…, "tilt":…, "tension":…}`),
 대상별로 list(위 순서의 위치 인자) / dict(키, 값 번갈아)로 바꿀 수 있다. 정의는 `docs/osc-values.md`.
 
 ## 긴장도 — MST 연결 그래프 (기본)

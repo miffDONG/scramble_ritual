@@ -44,14 +44,14 @@ STATIC_DIR = os.path.join(HERE, "static")
 
 # OSC payload field order (list format = these positions; dict/json = keys).
 # `id` is the reacTIVision fiducial symbol id — the object's identity.
-OSC_OBJ_FIELDS = ["id", "binary_id", "x", "y", "tilt", "tension", "flip", "freq"]
-BINARY_ID_BITS = 8   # amoeba ids are 0..215 -> 8 bits, zero-padded ("00001100")
+OSC_OBJ_FIELDS = ["id", "bits", "x", "y", "tilt", "tension"]
+BITS_WIDTH = 8   # amoeba ids are 0..215 -> 8 bits, zero-padded ("00001100")
 
 
-def binary_id(code_id):
-    """Fiducial id as a fixed-width binary string (the Morse-era `bits`
-    field, now derived from the reacTIVision symbol number)."""
-    return format(int(code_id), f"0{BINARY_ID_BITS}b")
+def id_bits(code_id):
+    """Fiducial id as a fixed-width binary string (`bits`; same width as the
+    Morse-era field, now derived from the reacTIVision symbol number)."""
+    return format(int(code_id), f"0{BITS_WIDTH}b")
 
 # Default payload format is JSON (one string argument: {"id": .., "x": .., ...});
 # per target it can be switched to list (positional) or dict (k, v, k, v ...).
@@ -140,14 +140,8 @@ def osc_targets(rt):
     return out
 
 
-def object_freq(code_id):
-    """Per-object semitone band derived from the id, so distinct ids are
-    audibly separable (-6..+5)."""
-    return float(((int(code_id) * 5) % 12) - 6)
-
-
 def object_json(o, tension=0.0):
-    return {"track": o.track_id, "id": o.code_id, "binary_id": binary_id(o.code_id),
+    return {"track": o.track_id, "id": o.code_id, "bits": id_bits(o.code_id),
             "label": o.label,
             "x": round(o.nx, 4), "y": round(o.ny, 4),
             "cx": round(o.cx, 1), "cy": round(o.cy, 1),
@@ -591,10 +585,9 @@ class ExhibitPipeline(threading.Thread):
 
         for o, t in zip(known, node_t):
             emit(f"{prefix}/obj",
-                 [int(o.code_id), binary_id(o.code_id),
+                 [int(o.code_id), id_bits(o.code_id),
                   norm(o.cx, ox, rw), norm(o.cy, oy, rh),
-                  round(float(o.angle), 2), t, 1 if o.flip else 0,
-                  round(object_freq(o.code_id), 2)])
+                  round(float(o.angle), 2), t])
 
         now = time.monotonic()
         if self._osc_last_t is not None:

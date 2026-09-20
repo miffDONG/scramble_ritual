@@ -97,11 +97,11 @@ webui/exhibit_server.py  (Flask, http://localhost:8765, UI = static/exhibit.html
 ## OSC
 
 - 주소는 `/scramble/obj` 하나, 오브제 1개당 1메시지, **카메라 프레임(TUIO fseq)마다** 송신.
-- 필드 순서(list 형식): `id, binary_id, x, y, tilt, tension, flip, freq` (`binary_id` = id의 8비트 이진 문자열)
+- 필드 순서(list 형식): `id, bits, x, y, tilt, tension` (`bits` = id의 8비트 이진 문자열)
   - `id` int — reacTIVision 피듀셜 심볼 번호(오브제 정체성). 세션 id는 보내지 않는다.
   - `x, y` 0~1 — ROI 지정 시 테이블 기준, 아니면 카메라 프레임 기준.
   - `tilt` −180~180 — 화면 시계방향 +(reacTIVision 각도를 도 단위로 wrap, `rtv_angle_offset`으로 0° 보정).
-  - `tension` 0~1, `flip` 항상 0(reacTIVision은 뒤집힘 미검출), `freq` = `((id*5)%12)-6`.
+  - `tension` 0~1 — 연결 그래프(기본 MST) 기준 긴장도.
 - 대상마다 형식(list / dict / json)을 따로 고를 수 있고, 모든 대상이 같은 값을 받는다.
 - 수신 테스트(두 터미널):
   ```

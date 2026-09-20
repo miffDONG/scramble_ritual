@@ -138,6 +138,12 @@
     "tension_knn": 3,
     "tension_link_radius": 0.2,
     "show_graph": true,
-    "osc_recents": []
+    "osc_recents": [
+      {
+        "osc_host": "127.0.0.1",
+        "osc_port": 9000,
+        "osc_prefix": "/scramble"
+      }
+    ]
   }
 }

@@ -37,7 +37,25 @@
     justify-content: center; background: #000; border-radius: 8px; overflow: hidden; }
   .viewbox img { max-height: 100%; max-width: 100%; width: auto; height: auto; display: block; }
   #roiLayer { position: absolute; inset: 0; cursor: crosshair; display: none; z-index: 3; }
-  #roiLayer.active { display: block; }
+  #roiLayer.active { display: block; z-index: 7; }
+  /* test mode: virtual object handles (above the image, below an active ROI drag) */
+  #objLayer { position: absolute; inset: 0; display: none; z-index: 5; pointer-events: none; }
+  #objLayer.active { display: block; }
+  .objHandle { position: absolute; pointer-events: auto; cursor: grab; user-select: none;
+    display: flex; align-items: center; justify-content: center;
+    clip-path: polygon(100% 50%, 75% 93.3%, 25% 93.3%, 0% 50%, 25% 6.7%, 75% 6.7%);
+    background: rgba(93,179,255,.22); color: #fff; font-weight: 700; font-size: 12px; }
+  .objHandle:hover { background: rgba(255,179,71,.35); }
+  .objHandle span { pointer-events: none; }
+  #objPopup { position: absolute; z-index: 9; display: none; background: var(--panel);
+    border: 1px solid var(--accent); border-radius: 8px; padding: 8px 10px; width: 230px;
+    box-shadow: 0 4px 18px rgba(0,0,0,.5); }
+  #objPopup .prow { display: flex; gap: 6px; align-items: center; margin: 5px 0; }
+  #objPopup .prow label { width: 50px; flex: 0 0 50px; white-space: nowrap; font-size: 12px; color: var(--dim); }
+  #objPopup .prow input[type=range] { flex: 1; accent-color: var(--accent); }
+  #objPopup .prow input[type=number] { width: 64px; padding: 3px 6px; }
+  body.test .rtv-only { display: none !important; }
+  body:not(.test) .test-only { display: none !important; }
   #roiRect { position: absolute; border: 2px dashed var(--accent);
     background: rgba(255,179,71,.15); display: none; pointer-events: none; z-index: 4; }
   .btn { background: var(--panel2); color: var(--text); border: 1px solid var(--line);
@@ -81,8 +99,9 @@
 </head>
 <body>
 <header>
-  <h1>Scramble Ritual · 전시</h1>
-  <span class="badge" id="rtvBadge">reacTIVision -</span>
+  <h1>Scramble Ritual · 전시<span class="test-only" style="color:var(--info)"> · 테스트</span></h1>
+  <span class="badge bad test-only" title="reacTIVision 신호를 받지 않고 가상 오브제로 동작">TEST · 가상 오브제</span>
+  <span class="badge rtv-only" id="rtvBadge">reacTIVision -</span>
   <span class="badge" id="tuioBadge">TUIO -</span>
   <span class="badge" id="oscBadge" title="OSC 실제 송신 주기와 사이클당 메시지 수">OSC 끔</span>
   <button class="btn primary" id="inferBtn" onclick="toggleInfer()">OSC 일시정지</button>
@@ -102,6 +121,8 @@
       </div>
       <div class="viewbox">
         <img id="stream" src="/stream/overlay" alt="stream">
+        <div id="objLayer"></div>
+        <div id="objPopup"></div>
         <div id="roiLayer"></div>
         <div id="roiRect"></div>
       </div>
@@ -110,7 +131,8 @@
         <span class="badge" id="chipSize">-</span>
         <span class="badge info" id="chipTension" title="긴장도 d_near 기준(오브제 크기 측정값 또는 고정값)">긴장 기준 -</span>
       </div>
-      <p class="hint">미리보기는 reacTIVision이 보내는 TUIO 값으로 그린 합성 화면입니다. 실제 카메라 영상은 reacTIVision 창에서 확인하세요.</p>
+      <p class="hint rtv-only">미리보기는 reacTIVision이 보내는 TUIO 값으로 그린 합성 화면입니다. 실제 카메라 영상은 reacTIVision 창에서 확인하세요.</p>
+      <p class="hint test-only">테스트 모드: 가상 오브제를 <b>드래그로 이동</b>, <b>클릭하면</b> ID·기울기 편집/삭제. 6각형은 긴장도 1이 되는 거리(접촉 거리)에서 변끼리 맞닿는 크기로 그려집니다.</p>
     </div>
     <div class="card">
       <h2>오브제 (피듀셜)</h2>
@@ -126,7 +148,18 @@
 
   <!-- ================= Config (우) ================= -->
   <div id="config">
-    <div class="card">
+    <div class="card test-only" id="testCard">
+      <h2><span class="step">1</span>테스트 오브제 (가상 · 6각형)</h2>
+      <div class="row">
+        <button class="btn primary" id="objAddBtn" onclick="addObject()">+ 오브제 추가</button>
+        <button class="btn" onclick="clearObjects()">모두 삭제</button>
+        <span class="badge info" id="objBadge">오브제 0/25</span>
+      </div>
+      <table id="vobjTbl"><thead><tr><th>ID</th><th>x</th><th>y</th><th>tilt</th><th></th></tr></thead><tbody></tbody></table>
+      <p class="hint">reacTIVision 인식 신호는 받지 않습니다. 오브제는 ID <b>0~24</b>(총 25개), [+ 오브제 추가]는 테이블 영역 안 빈 자리에 <b>비어 있는 가장 작은 ID</b>로 놓습니다. 같은 ID는 중복될 수 없습니다. 가상 오브제는 카메라 fps(<span id="vFps">-</span>)마다 한 프레임으로 전시와 같은 경로(영역 → 긴장도 → OSC)로 송신됩니다. 배치는 <code>webui/test_objects.json</code>에 저장됩니다.</p>
+    </div>
+
+    <div class="card rtv-only">
       <h2><span class="step">1</span>전시 카메라 (reacTIVision)</h2>
       <label class="flabel">카메라</label>
       <div class="row">
@@ -465,12 +498,12 @@ function renderRtvStatus(st) {
     if (first && !$('rtvRes').options.length) fillRes();   // list was empty: show the running mode
   }
   $('rtvBadge').textContent = 'reacTIVision ' + (st.running ? (st.format || '실행') : '정지');
-  $('rtvBadge').className = 'badge ' + (st.running && !st.error ? 'ok' : 'bad');
-  $('tuioBadge').textContent = `TUIO ${st.tuio_fps ?? 0}fps`;
+  $('rtvBadge').className = 'badge rtv-only ' + (st.running && !st.error ? 'ok' : 'bad');
+  $('tuioBadge').textContent = (testMode ? '가상 ' : 'TUIO ') + `${st.tuio_fps ?? 0}fps`;
   $('tuioBadge').className = 'badge ' + ((st.tuio_fps || 0) > 1 ? 'ok' : '');
 }
 async function pollLog() {
-  if (!$('logDetails').open) return;
+  if (testMode || !$('logDetails').open) return;
   const d = await api('/api/rtv/log');
   const pre = $('rtvLog');
   pre.textContent = (d.log || []).join('\n');
@@ -505,7 +538,7 @@ function readTargets() {
 }
 function addTarget() {
   const cur = readTargets();
-  cur.push({ name: `target${cur.length + 1}`, host: '127.0.0.1', port: 9000, format: 'json', enabled: true });
+  cur.push({ name: `target${cur.length + 1}`, host: '127.0.0.1', port: 9000, format: 'dict', enabled: true });
   renderTargets(cur);
 }
 function applyTargets() { postOpt('osc_targets', readTargets()); toast('OSC 대상 적용'); }
@@ -630,6 +663,7 @@ async function poll() {
     const st = await api('/api/state');
     const res = st.results, rt = st.runtime;
     renderRtvStatus(st.rtv);
+    if (st.test_mode) renderVirtual(st.virtual, st.rtv, rt);
     const ob = $('oscBadge');
     if (rt.osc_enabled && res.osc_fps > 0) {
       ob.textContent = `OSC ${res.osc_fps}fps · ${res.osc_msgs}msg`; ob.className = 'badge ok';
@@ -659,10 +693,142 @@ async function poll() {
   } catch (e) { $('error').textContent = '서버 연결 끊김'; }
 }
 
+/* ---------- test mode: virtual objects ---------- */
+let testMode = false, vState = { objects: [], limit: 25, hex_r: 0, canvas: [0, 0] };
+let objDrag = null, popupIdx = -1;
+const objLayer = $('objLayer'), objPopup = $('objPopup');
+
+function renderVirtual(v, rtvSt, rt) {
+  if (!v) return;
+  vState = v;
+  if (rt) rtCache = rt;                // current ROI for drag clamping
+  objLayer.classList.add('active');
+  const n = v.objects.length;
+  $('objBadge').textContent = `오브제 ${n}/${v.limit}`;
+  $('objBadge').className = 'badge ' + (n >= v.limit ? 'ok' : 'info');
+  $('objAddBtn').disabled = n >= v.limit;
+  if (rt) $('vFps').textContent = (rt.rtv_fps || 120) + 'fps';
+  renderObjHandles();
+  renderVirtualTable();
+}
+function renderVirtualTable() {
+  const tb = $('vobjTbl').querySelector('tbody');
+  if (document.activeElement && tb.contains(document.activeElement)) return;   // don't clobber typing
+  tb.innerHTML = vState.objects.map((o, i) =>
+    `<tr><td><input type="number" min="0" max="24" value="${o.id}" style="width:58px" onchange="objUpdate(${i}, {code_id: +this.value})"></td>
+     <td>${o.x.toFixed(3)}</td><td>${o.y.toFixed(3)}</td>
+     <td><input type="number" min="-180" max="180" step="1" value="${Math.round(o.tilt)}" style="width:64px" onchange="objUpdate(${i}, {tilt: +this.value})"></td>
+     <td><button class="btn small" title="삭제" onclick="removeObject(${i})">✕</button></td></tr>`
+  ).join('') || '<tr><td colspan="5" class="dim">가상 오브제 없음 — [+ 오브제 추가]</td></tr>';
+}
+function hexPx() {
+  // canvas-pixel circumradius -> display pixels of the preview image
+  const r = imgRect(), cw = vState.canvas[0] || 0;
+  if (!cw || !r.width) return 16;
+  return Math.max(10, (vState.hex_r || 16) * r.width / cw);
+}
+function renderObjHandles() {
+  if (objDrag) return;                 // don't clobber a live drag
+  const r = imgRect(), vb = objLayer.getBoundingClientRect(), R = hexPx();
+  objLayer.innerHTML = '';
+  vState.objects.forEach((o, i) => {
+    const h = document.createElement('div');
+    h.className = 'objHandle';
+    h.style.width = (2 * R) + 'px'; h.style.height = (2 * R) + 'px';
+    h.style.left = (r.left - vb.left + o.x * r.width - R) + 'px';
+    h.style.top = (r.top - vb.top + o.y * r.height - R) + 'px';
+    h.style.transform = `rotate(${o.tilt}deg)`;
+    h.innerHTML = `<span style="transform:rotate(${-o.tilt}deg)">${o.id}</span>`;
+    h.addEventListener('mousedown', e => {
+      e.preventDefault(); e.stopPropagation();
+      objDrag = { idx: i, el: h, R, moved: false, sx: e.clientX, sy: e.clientY };
+      h.style.cursor = 'grabbing';
+    });
+    objLayer.appendChild(h);
+  });
+}
+function clampToTable(nx, ny) {
+  const roi = rtCache && rtCache.roi;
+  if (roi) { nx = Math.max(roi[0], Math.min(roi[0] + roi[2], nx)); ny = Math.max(roi[1], Math.min(roi[1] + roi[3], ny)); }
+  return [Math.max(0, Math.min(1, nx)), Math.max(0, Math.min(1, ny))];
+}
+window.addEventListener('mousemove', e => {
+  if (!objDrag) return;
+  if (Math.abs(e.clientX - objDrag.sx) + Math.abs(e.clientY - objDrag.sy) > 3) objDrag.moved = true;
+  if (!objDrag.moved) return;
+  const r = imgRect(), vb = objLayer.getBoundingClientRect();
+  const [nx, ny] = clampToTable((e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height);
+  objDrag.nx = nx; objDrag.ny = ny;
+  objDrag.el.style.left = (r.left - vb.left + nx * r.width - objDrag.R) + 'px';
+  objDrag.el.style.top = (r.top - vb.top + ny * r.height - objDrag.R) + 'px';
+  const now = performance.now();       // live-post while dragging so OSC follows the cursor
+  if (!objDrag.lastPost || now - objDrag.lastPost > 40) {
+    objDrag.lastPost = now;
+    api('/api/object', { action: 'move', index: objDrag.idx, x: nx, y: ny });
+  }
+});
+window.addEventListener('mouseup', async () => {
+  if (!objDrag) return;
+  const d = objDrag; objDrag = null;
+  if (d.moved && d.nx !== undefined) {
+    const r = await api('/api/object', { action: 'move', index: d.idx, x: d.nx, y: d.ny });
+    renderVirtual(r);
+  } else {
+    openObjPopup(d.idx);
+  }
+});
+async function objCall(body, okMsg) {
+  const r = await api('/api/object', body);
+  if (!r.ok) toast(r.error || '실패');
+  else if (okMsg) toast(okMsg);
+  renderVirtual(r);
+  return r;
+}
+async function addObject() {
+  const r = await objCall({ action: 'add' });
+  if (r.ok) toast(`오브제 추가 (총 ${r.objects.length}/${r.limit})`);
+}
+async function clearObjects() { objPopup.style.display = 'none'; await objCall({ action: 'clear' }, '오브제 모두 삭제'); }
+async function removeObject(i) { objPopup.style.display = 'none'; await objCall({ action: 'remove', index: i }, '오브제 삭제'); }
+async function objUpdate(i, fields) {
+  const r = await objCall({ action: 'update', index: i, ...fields });
+  if (popupIdx === i && objPopup.style.display === 'block') openObjPopup(i);   // re-sync after a rejected ID
+  return r;
+}
+function openObjPopup(i) {
+  const o = vState.objects[i];
+  if (!o) return;
+  popupIdx = i;
+  const r = imgRect(), vb = objLayer.getBoundingClientRect();
+  objPopup.style.left = Math.max(0, Math.min(vb.width - 240, r.left - vb.left + o.x * r.width + 20)) + 'px';
+  objPopup.style.top = Math.max(0, Math.min(vb.height - 150, r.top - vb.top + o.y * r.height - 20)) + 'px';
+  objPopup.innerHTML =
+    `<div class="prow"><label>ID</label><input type="number" id="pID" min="0" max="24" value="${o.id}"><span class="dim" style="font-size:11px">0~24</span></div>
+     <div class="prow"><label>기울기</label><input type="range" id="pTilt" min="-180" max="180" step="1" value="${Math.round(o.tilt)}"><input type="number" id="pTiltN" min="-180" max="180" step="1" value="${Math.round(o.tilt)}"></div>
+     <div class="prow"><label></label><button class="btn small" onclick="nudgeTilt(${i},-15)">−15°</button><button class="btn small" onclick="nudgeTilt(${i},15)">+15°</button><button class="btn small" onclick="nudgeTilt(${i},null)">0°</button></div>
+     <div class="prow"><button class="btn small" style="flex:1" onclick="objPopup.style.display='none'">닫기</button><button class="btn small danger" style="flex:1" onclick="removeObject(${i})">삭제</button></div>`;
+  $('pID').onchange = e => objUpdate(i, { code_id: +e.target.value });
+  const sl = $('pTilt'), nm = $('pTiltN');
+  sl.oninput = e => { nm.value = e.target.value; api('/api/object', { action: 'update', index: i, tilt: +e.target.value }); };
+  nm.onchange = e => { const v = Math.max(-180, Math.min(180, Math.round(+e.target.value || 0))); sl.value = v; objUpdate(i, { tilt: v }); };
+  objPopup.style.display = 'block';
+}
+function nudgeTilt(i, delta) {
+  const o = vState.objects[i]; if (!o) return;
+  let v = delta === null ? 0 : Math.round(o.tilt) + delta;
+  v = ((v + 180) % 360 + 360) % 360 - 180;
+  if ($('pTilt')) { $('pTilt').value = v; $('pTiltN').value = v; }
+  objUpdate(i, { tilt: v });
+}
+window.addEventListener('resize', () => { if (testMode) renderObjHandles(); });
+
 async function init() {
   const st = await api('/api/state');
+  testMode = !!st.test_mode;
+  document.body.classList.toggle('test', testMode);
+  if (testMode) document.title = 'Scramble Ritual · 테스트';
   fillForm(st.runtime);
-  await loadRtvModes(false);
+  if (!testMode) await loadRtvModes(false);
   await loadConfigs();
   poll();
   setInterval(poll, 500);

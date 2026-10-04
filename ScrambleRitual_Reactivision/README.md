@@ -23,6 +23,26 @@ scripts\exhibition_start.bat --no-rtv   :: reacTIVision을 직접 띄울 때
 
 수동: `.venv\Scripts\python -m webui.exhibit_server [--port 8765] [--rtv-exe PATH] [--no-rtv]`
 
+### 테스트 (가상 오브제, reacTIVision 없음)
+
+```bat
+scripts\test_start.bat                 :: Windows  http://localhost:8765  (= exhibit_server --test)
+scripts/test_start.command             :: macOS    (Finder 더블클릭 / 터미널)
+python3 scripts/launch.py test         :: 어느 OS든 직접
+```
+
+세 진입점 모두 `scripts/launch.py`로 넘어간다: OS(Windows/macOS/Linux) 판별 → `.venv` 유무와
+requirements 설치 여부 확인(`.venv/.requirements.stamp`) → 없거나 `requirements.txt`가 바뀌었으면
+OS에 맞는 레이아웃(`Scripts\python.exe` / `bin/python3`)으로 생성·설치 → 브라우저 열고 서버 실행.
+Python 3.10+가 시스템에 있어야 한다(Windows: python.org 설치 시 "Add to PATH", macOS: `brew install python`).
+
+- reacTIVision을 실행하지도, TUIO(3333)를 받지도 않는다. 카메라 없이 동작.
+- 웹 UI 1번 패널이 **테스트 오브제**로 바뀐다: 6각형 오브제 추가/삭제, ID **0~24**(총 25개, 중복 불가) 수정,
+  미리보기에서 드래그로 위치 이동(테이블 영역 안으로 제한), 클릭해서 ID·기울기 편집.
+- 가상 오브제는 카메라 fps(`rtv_fps`, 기본 120)마다 한 프레임으로 **전시와 같은 경로**(영역 → 긴장도 → OSC)를 탄다.
+  설정 파일(`webui/exhibit_config.json`), OSC 대상·형식·프리픽스가 전시와 같다.
+- 6각형 크기는 긴장도 1이 되는 접촉 거리에서 변끼리 맞닿도록 그린다. 배치는 `webui/test_objects.json`에 저장.
+
 - reacTIVision 1.5.1 win64 배포판은 프로젝트 **밖** `C:\Users\baksh\scramble_ritual\reactivision\`에 둔다.
   없으면 첫 실행 때 `~/Downloads/reacTIVision-1.5.1-win64/…`에서 자동 복사한다.
 - 서버가 그 폴더의 `camera.xml`/`reacTIVision.xml`을 웹 설정으로 생성한다(원본은 `*.orig`).
@@ -42,8 +62,8 @@ scripts\exhibition_start.bat --no-rtv   :: reacTIVision을 직접 띄울 때
 ## OSC
 
 주소 `/scramble/obj` 하나, 오브제 1개당 1메시지, 카메라 프레임(TUIO fseq)마다.
-기본 형식은 **JSON**(인자 1개 = `{"id":…, "bits":"…", "x":…, "y":…, "tilt":…, "tension":…}`),
-대상별로 list(위 순서의 위치 인자) / dict(키, 값 번갈아)로 바꿀 수 있다. 정의는 `docs/osc-values.md`.
+기본 형식은 **dict**(키, 값 번갈아: `"id", 12, "bits", "00001100", "x", …, "tension", …`),
+대상별로 list(위 순서의 위치 인자) / json(인자 1개 = JSON 문자열)으로 바꿀 수 있다. 정의는 `docs/osc-values.md`.
 
 ## 긴장도 — MST 연결 그래프 (기본)
 
@@ -58,6 +78,7 @@ webui/exhibit_server.py     Flask 서버 + 파이프라인 (TUIO → ROI → 긴
 webui/static/exhibit.html   웹 UI (단일 파일)
 tracker/reactivision.py     reacTIVision 자식 프로세스, -l 파싱, XML 생성/가져오기, TUIO 수신
 tracker/tension.py          긴장도 수학 (MST/all/near/knn, fold, 오버레이)
+tracker/virtual.py          테스트 모드 가상 오브제 (ID 0~24) + TUIO 대체 프레임 소스
 conductor/, firmware/       144ch 릴레이 매트릭스 (별도 하드웨어 서브시스템)
 docs/exhibition.md          구조·설정 키 ↔ XML 매핑·문제 해결
 docs/osc-values.md          OSC 값 정의

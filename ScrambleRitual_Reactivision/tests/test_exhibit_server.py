@@ -70,8 +70,8 @@ class TestOscFormatting(unittest.TestCase):
         self.assertEqual(t[0]["port"], 57120)
         self.assertTrue(t[0]["enabled"])
         self.assertEqual((t[1]["host"], t[1]["format"], t[1]["enabled"]),
-                         ("127.0.0.1", "json", False))     # unknown format -> default json
-        self.assertTrue(all(t["format"] == "json" for t in X.DEFAULT_OSC_TARGETS))
+                         ("127.0.0.1", "dict", False))     # unknown format -> default dict
+        self.assertTrue(all(t["format"] == "dict" for t in X.DEFAULT_OSC_TARGETS))
 
 
 class TestSendOsc(unittest.TestCase):

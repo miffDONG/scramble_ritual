@@ -269,16 +269,15 @@
       <h2><span class="step">3</span>긴장도</h2>
       <div class="grid">
         <label title="각 오브제가 어떤 이웃과 연결되는지. MST = 모든 오브제를 하나의 최소 신장 트리로 잇고(n−1 간선) 트리 이웃만 반영">연결</label>
-        <select id="tension_connect" onchange="postOpt('tension_connect', this.value)">
-          <option value="mst">MST (최소 신장 트리)</option><option value="all">전체 (n−1)</option><option value="near">근접만 (반경 이내)</option><option value="knn">최근접 k개</option>
+        <select id="tension_connect" disabled>
+          <option value="mst">MST (1.0 연결 유지)</option>
         </select>
         <label title="연결된 이웃들의 긴장도를 하나로 합치는 방식">결합</label>
-        <select id="tension_fold" onchange="postOpt('tension_fold', this.value)">
-          <option value="max">max</option><option value="avg">avg</option><option value="min">min</option>
+        <select id="tension_fold" disabled>
+          <option value="max">max</option>
         </select>
-        <label>k</label><input type="number" id="tension_knn" min="1" max="16" onchange="postOpt('tension_knn', +this.value)">
-        <label title="near일 때 연결 반경 (테이블 긴 변 기준 0~1)">연결 반경</label>
-        <input type="number" id="tension_link_radius" step="0.01" min="0.02" max="1" onchange="postOpt('tension_link_radius', +this.value)">
+        <label title="접촉거리의 연속 보정량. 테이블 긴 변 기준이며 접촉거리와 합이 0.5 미만이어야 함">접촉 보정 거리</label>
+        <input type="number" id="tension_margin" step="0.001" min="0" max="0.49" onchange="postOpt('tension_margin', +this.value)">
         <label>그래프 표시</label><input type="checkbox" id="show_graph" onchange="postOpt('show_graph', this.checked)">
       </div>
     </div>
@@ -293,7 +292,7 @@
       </div>
       <table id="tgtTbl"><thead><tr><th>이름</th><th>host</th><th>port</th><th>형식</th><th>on</th><th></th></tr></thead><tbody></tbody></table>
       <div id="oscFieldOrder" class="hint mono"></div>
-      <p class="hint">모든 대상에 같은 <code>/scramble/obj</code> 메시지(오브제 1개당 1개, 카메라 프레임마다)를 보냅니다. 형식: 리스트=값 순서대로 / 딕셔너리=키,값 번갈아 / JSON=문자열 1개.</p>
+      <p class="hint">SOUND는 <code>/scramble/obj</code> 메시지로, TD는 같은 데이터를 <code>id1</code>, <code>bits1</code>, <code>x1</code> 등의 주소로 프레임당 하나의 번들에 담아 보냅니다. TD 숫자 필드는 CHOP, bits 문자열은 DAT로 수신합니다.</p>
     </div>
 
     <div class="card">
@@ -520,7 +519,7 @@ function renderTargets(list) {
       <td><input type="text" value="${t.name}"></td>
       <td><input type="text" value="${t.host}" style="width:110px"></td>
       <td><input type="number" value="${t.port}" style="width:72px"></td>
-      <td><select><option value="list">리스트</option><option value="dict">딕셔너리</option><option value="json">JSON</option></select></td>
+      <td><select><option value="list">리스트</option><option value="dict">딕셔너리</option><option value="json">JSON</option><option value="td">TD 번들</option></select></td>
       <td><input type="checkbox" ${t.enabled ? 'checked' : ''}></td>
       <td><button class="btn small" title="삭제">✕</button></td>`;
     tr.querySelector('select').value = t.format;
@@ -566,10 +565,9 @@ function fillForm(rt) {
   $('object_side_px').value = rt.object_side_px;
   $('object_side_mm').value = rt.object_side_mm || '';
   $('table_long_mm').value = rt.table_long_mm || '';
-  $('tension_connect').value = rt.tension_connect;
-  $('tension_fold').value = rt.tension_fold;
-  $('tension_knn').value = rt.tension_knn;
-  $('tension_link_radius').value = rt.tension_link_radius;
+  $('tension_connect').value = 'mst';
+  $('tension_fold').value = 'max';
+  $('tension_margin').value = rt.tension_margin || 0;
   $('show_graph').checked = !!rt.show_graph;
   $('osc_enabled').checked = !!rt.osc_enabled;
   $('osc_prefix').value = rt.osc_prefix;

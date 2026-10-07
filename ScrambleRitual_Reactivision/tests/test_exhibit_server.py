@@ -19,6 +19,9 @@ class FakeClient:
     def send_message(self, addr, args):
         FakeClient.sent[self.key].append((addr, args))
 
+    def send(self, bundle):
+        FakeClient.sent[self.key].append(("#bundle", bundle))
+
 
 def bare_pipeline(rt):
     p = X.ExhibitPipeline.__new__(X.ExhibitPipeline)
@@ -40,7 +43,7 @@ def obj(sid, fid, cx, cy, angle=0.0):
 class TestOscFormatting(unittest.TestCase):
     def test_field_order(self):
         self.assertEqual(X.OSC_OBJ_FIELDS[0], "id")
-        self.assertEqual(X.OSC_OBJ_FIELDS, ["id", "bits", "x", "y", "tilt", "tension"])
+        self.assertEqual(X.OSC_OBJ_FIELDS, ["id", "bits", "x", "y", "tilt", "tension", "pairId", "heartbeat"])
 
     def test_id_bits(self):
         self.assertEqual(X.id_bits(0), "00000000")
@@ -71,7 +74,7 @@ class TestOscFormatting(unittest.TestCase):
         self.assertTrue(t[0]["enabled"])
         self.assertEqual((t[1]["host"], t[1]["format"], t[1]["enabled"]),
                          ("127.0.0.1", "dict", False))     # unknown format -> default dict
-        self.assertTrue(all(t["format"] == "dict" for t in X.DEFAULT_OSC_TARGETS))
+        self.assertEqual([t["format"] for t in X.DEFAULT_OSC_TARGETS], ["dict", "td"])
 
 
 class TestSendOsc(unittest.TestCase):
@@ -79,7 +82,7 @@ class TestSendOsc(unittest.TestCase):
         FakeClient.sent = {}
         self.rt = {**X.EXHIBIT_DEFAULTS, "osc_enabled": True, "osc_targets": [
             {"name": "SC", "host": "127.0.0.1", "port": 57120, "format": "list", "enabled": True},
-            {"name": "TD", "host": "127.0.0.1", "port": 7000, "format": "json", "enabled": True},
+            {"name": "JSON", "host": "127.0.0.1", "port": 7000, "format": "json", "enabled": True},
             {"name": "off", "host": "127.0.0.1", "port": 9999, "format": "dict", "enabled": False},
         ]}
 
@@ -108,7 +111,7 @@ class TestSendOsc(unittest.TestCase):
         first_td = json.loads(next(args[0] for _, args in td if json.loads(args[0])["id"] == 9))
         self.assertEqual(first_sc, [first_td[k] for k in X.OSC_OBJ_FIELDS])
         self.assertEqual(first_td["tilt"], 45.0)
-        self.assertEqual(sorted({r[2] for r in log}), ["SC", "TD"])
+        self.assertEqual(sorted({r[2] for r in log}), ["JSON", "SC"])
         self.assertEqual(len(log), 4)
 
     def test_roi_normalization(self):
@@ -246,8 +249,8 @@ class TestFrameCallback(unittest.TestCase):
         self.assertEqual(p._size, (1280, 800))
         self.assertEqual((objs[0].cx, objs[0].cy), (320.0, 400.0))   # canvas px filled in
         self.assertEqual(len(FakeClient.sent[("127.0.0.1", 57120)]), 2)
-        self.assertEqual(len(p._last_osc_log), 4)                     # 2 objects x 2 targets
-        self.assertIs(p._last_objs, objs)
+        self.assertEqual(len(p._last_osc_log), 18)   # 2 SOUND messages + 16 TD bundle fields
+        self.assertEqual(p._last_objs, objs)
         # paused: nothing sent, graph still computed
         FakeClient.sent = {}
         p.infer_on = False

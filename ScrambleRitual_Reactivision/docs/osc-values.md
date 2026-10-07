@@ -1,5 +1,7 @@
 # OSC 전송 값 정의
 
+> 아래 내용은 이전 6필드 전송 명세다. 현재 구현은 SOUND의 기존 키·값 형식에 pairId, heartbeat를 추가하고, TD에는 같은 데이터의 필드별 주소를 프레임당 하나의 bundle로 전송한다. 현재 규격과 인식 수명·MST 유지·거리 보정 규칙은 [osc-td-design.md](osc-td-design.md)를 따른다. 전시 파이프라인은 MST + max를 사용하며 그룹 전송은 보류한다.
+
 전시 서버(`webui/exhibit_server.py`) → SuperCollider · TouchDesigner.
 
 전송되는 메시지는 **한 가지뿐**이다:

@@ -5,7 +5,7 @@ Scramble Ritual — exhibition server (reacTIVision edition).
                   are generated into its own folder, ~/scramble_ritual/reactivision/)
                -> TUIO /tuio/2Dobj on UDP 127.0.0.1:3333
                -> this pipeline: ROI normalize -> tension graph -> OSC
-               -> /scramble/obj to every OSC target (SuperCollider, TouchDesigner)
+               -> SOUND /scramble/obj + TD per-frame OSC bundle
 
 reacTIVision is the only recognition method: no OpenCV detection, no
 simulation, no video/image sources. The web UI exposes what the exhibition
@@ -39,8 +39,9 @@ from tracker.reactivision import (
     default_mode, find_exe, import_xml, list_modes, original_xml_paths,
 )
 from tracker.virtual import LIMIT as VIRTUAL_LIMIT, VirtualSource, VirtualTable
+from tracker.ritual import RitualState
 from tracker.tension import (
-    draw_tension_graph, roi_to_px, tension_color, tension_graph,
+    draw_tension_graph, roi_to_px, tension_color,
     tension_thresholds,
 )
 
@@ -52,7 +53,7 @@ TEST_OBJECTS_PATH = os.path.join(HERE, "test_objects.json")   # --test: virtual 
 
 # OSC payload field order (list format = these positions; dict/json = keys).
 # `id` is the reacTIVision fiducial symbol id — the object's identity.
-OSC_OBJ_FIELDS = ["id", "bits", "x", "y", "tilt", "tension"]
+OSC_OBJ_FIELDS = ["id", "bits", "x", "y", "tilt", "tension", "pairId", "heartbeat"]
 BITS_WIDTH = 8   # amoeba ids are 0..215 -> 8 bits, zero-padded ("00001100")
 
 
@@ -68,7 +69,7 @@ DEFAULT_OSC_TARGETS = [
     {"name": "SuperCollider", "host": "127.0.0.1", "port": 57120,
      "format": DEFAULT_OSC_FORMAT, "enabled": True},
     {"name": "TouchDesigner", "host": "127.0.0.1", "port": 7000,
-     "format": DEFAULT_OSC_FORMAT, "enabled": True},
+     "format": "td", "enabled": True},
 ]
 
 EXHIBIT_DEFAULTS = {
@@ -81,6 +82,7 @@ EXHIBIT_DEFAULTS = {
     "roi": None,
     "object_side_px": 0.0,       # measured triangle side (canvas px); 0 = use tension_contact
     "tension_contact": 0.06,     # d_near (normalized by the table long side) when side_px is 0
+    "tension_margin": 0.012,     # contact plateau extension, normalized by table long side
     # how tension_contact was set: measured (two touching markers) | physical
     # (object_side_mm / table_long_mm) | manual (typed / default) — display only
     "tension_contact_src": "manual",
@@ -146,7 +148,9 @@ def osc_targets(rt):
             continue
         host = str(t.get("host") or "127.0.0.1").strip() or "127.0.0.1"
         fmt = str(t.get("format") or DEFAULT_OSC_FORMAT)
-        if fmt not in ("list", "dict", "json"):
+        if str(t.get("name", "")).lower() in ("td", "touchdesigner"):
+            fmt = "td"   # migrate existing named TD targets to the bundle contract
+        if fmt not in ("list", "dict", "json", "td"):
             fmt = DEFAULT_OSC_FORMAT
         out.append({"name": str(t.get("name") or f"target{i + 1}"), "host": host,
                     "port": port, "format": fmt, "enabled": bool(t.get("enabled", True))})
@@ -287,6 +291,7 @@ class ExhibitPipeline(threading.Thread):
                 self._dump(CFG_PATH, rt)
             except Exception:
                 pass
+        rt["osc_targets"] = osc_targets(rt)
         return rt
 
     @staticmethod
@@ -608,7 +613,7 @@ class ExhibitPipeline(threading.Thread):
             o.cx, o.cy = o.nx * W, o.ny * H
         roi_px = roi_to_px(rt.get("roi"), W, H)
         log = self._send_osc(rt, objs, (W, H), roi_px, send=self.infer_on)
-        self._last_objs = objs
+        self._last_objs = list(self._ritual.objects.values())
         self._last_roi_px = roi_px
         if log is not None:            # None = monitor rows skipped this frame
             self._last_osc_log = log
@@ -670,8 +675,8 @@ class ExhibitPipeline(threading.Thread):
     # -- OSC -----------------------------------------------------------------
 
     def _send_osc(self, rt, objs, frame_size, roi_px=None, send=True):
-        """Tension graph (always, for the overlay) + per-object OSC to every
-        enabled target when OSC is on and `send` is set. Returns the monitor
+        """Stable MST/max + SOUND object messages and one TD frame bundle.
+        Enabled targets receive data when OSC is on and `send` is set. Returns monitor
         rows [(address, text, target)]."""
         osc_on = bool(rt.get("osc_enabled"))
         show_graph = bool(rt.get("show_graph", True))
@@ -685,16 +690,16 @@ class ExhibitPipeline(threading.Thread):
             rw, rh = max(x2 - ox, 1), max(y2 - oy, 1)
         else:
             ox, oy, rw, rh = 0, 0, w, h
-        known = sorted(objs, key=lambda o: (o.cx, o.cy))
+        if not hasattr(self, "_ritual"):
+            self._ritual = RitualState()
+        known = self._ritual.update(objs, roi_px)
         side_px = float(rt.get("object_side_px", 0.0) or 0.0)
         long_px = max(rw, rh)
         d_near, d_far, self.tension_basis = tension_thresholds(rt, side_px, long_px)
         # test-mode hexagon: apothem = d_near/2, so two plates touch at tension 1
         self._hex_r = (d_near * long_px / 2.0) * 2.0 / math.sqrt(3.0)
-        edges, node_t = tension_graph(
-            known, long_px, d_near, d_far,
-            str(rt.get("tension_connect", "mst")), str(rt.get("tension_fold", "max")),
-            int(rt.get("tension_knn", 3) or 3), float(rt.get("tension_link_radius", 0.2) or 0.2))
+        edges, node_t = self._ritual.graph(
+            long_px, d_near, d_far, float(rt.get("tension_margin", 0.0) or 0.0))
         self._graph = ([(float(o.cx), float(o.cy)) for o in known], edges, node_t) \
             if show_graph else None
         self._last_node_t = {o.track_id: t for o, t in zip(known, node_t)}
@@ -728,22 +733,40 @@ class ExhibitPipeline(threading.Thread):
         def norm(v, origin, span):   # clamp so receivers always get 0..1
             return round(max(0.0, min(1.0, (v - origin) / span)), 4)
 
-        def emit(addr, values):
-            for t in targets:
-                args = format_osc_args(t["format"], OSC_OBJ_FIELDS, values)
-                try:
-                    self._osc_clients[(t["host"], t["port"])].send_message(addr, args)
-                    if want_log:
-                        log.append([addr, osc_args_text(t["format"], args), t["name"], t["format"]])
-                except Exception as exc:
-                    if want_log:
-                        log.append([addr, f"send error: {exc}", t["name"], t["format"]])
-
+        from pythonosc.osc_bundle_builder import OscBundleBuilder, IMMEDIATELY
+        from pythonosc.osc_message_builder import OscMessageBuilder
+        rows = []
         for o, t in zip(known, node_t):
-            emit(f"{prefix}/obj",
-                 [int(o.code_id), id_bits(o.code_id),
+            rows.append([int(o.code_id), id_bits(o.code_id),
                   norm(o.cx, ox, rw), norm(o.cy, oy, rh),
-                  round(float(o.angle), 2), t])
+                  round(float(o.angle), 2), t, self._ritual.pairs[o.code_id],
+                  self._ritual.heartbeat])
+        for target in targets:
+            client = self._osc_clients[(target["host"], target["port"])]
+            try:
+                if target["format"] == "td":
+                    bundle = OscBundleBuilder(IMMEDIATELY)
+                    for index, values in enumerate(rows, 1):
+                        for field, value in zip(OSC_OBJ_FIELDS, values):
+                            field = "pairID" if field == "pairId" else field
+                            addr = f"{prefix}/{field}{index}"
+                            message = OscMessageBuilder(address=addr)
+                            message.add_arg(value)
+                            bundle.add_content(message.build())
+                            if want_log:
+                                log.append([addr, osc_args_text("list", [value]), target["name"], "td"])
+                    if rows:
+                        client.send(bundle.build())
+                else:
+                    for values in rows:
+                        args = format_osc_args(target["format"], OSC_OBJ_FIELDS, values)
+                        client.send_message(f"{prefix}/obj", args)
+                        if want_log:
+                            log.append([f"{prefix}/obj", osc_args_text(target["format"], args),
+                                        target["name"], target["format"]])
+            except Exception as exc:
+                if want_log:
+                    log.append([prefix, f"send error: {exc}", target["name"], target["format"]])
 
         now = time.perf_counter()
         if self._osc_last_t is not None:

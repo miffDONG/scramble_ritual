@@ -111,7 +111,7 @@ def object_tension(i, dists, d_near, d_far, connect="all", fold="max", knn=3,
     return round(_fold(tensions, fold), 4)
 
 
-def mst_edges(dist, n):
+def mst_edges(dist, n, preferred=()):
     """Minimum spanning tree (Kruskal) over a dense distance matrix.
     Returns [(i, j)] with i < j — n-1 edges linking every node."""
     parent = list(range(n))
@@ -123,8 +123,9 @@ def mst_edges(dist, n):
         return a
 
     out = []
-    for _d, i, j in sorted((dist[i][j], i, j)
-                           for i in range(n) for j in range(i + 1, n)):
+    preferred = set(preferred)
+    for _priority, _d, i, j in sorted((0 if (i, j) in preferred else 1, dist[i][j], i, j)
+                                    for i in range(n) for j in range(i + 1, n)):
         ri, rj = find(i), find(j)
         if ri != rj:
             parent[ri] = rj

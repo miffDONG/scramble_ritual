@@ -7,15 +7,21 @@ Scramble Ritual — exhibition server (reacTIVision edition).
                -> this pipeline: ROI normalize -> tension graph -> OSC
                -> /scramble/obj to every OSC target (SuperCollider, TouchDesigner)
 
-reacTIVision is the only recognition method: no OpenCV detection, no
-simulation, no video/image sources. The web UI exposes what the exhibition
-needs — reacTIVision settings, the table region, object size, tension knobs
-(MST graph by default), OSC targets, profiles and a monitor.
+Exhibition mode uses reacTIVision for recognition. Test mode uses virtual
+objects instead. The web UI exposes the table region, object size, tension
+knobs (MST graph by default), OSC targets, profiles and a monitor.
 
-Run:  python -m webui.exhibit_server   (scripts/exhibition_start.bat)
+Run:  python -m webui.exhibit_server          (scripts/exhibition_start.bat)
+      python -m webui.exhibit_server --test   (scripts/test_start.command)
+
+--test: reacTIVision is neither started nor listened to (no camera, no TUIO
+port). Hand-placed virtual hexagon objects (IDs 0..24, tracker/virtual.py)
+are emitted as frames with a 120 fps target instead; everything downstream —
+ROI, tension, OSC targets and format, config file — is the exhibition path.
 """
 
 import argparse
+from collections import deque
 import json
 import math
 import os
@@ -32,6 +38,7 @@ from tracker.reactivision import (
     RTV_DEFAULTS, ExhibitObject, ReactivisionProcess, TuioReceiver,
     default_mode, find_exe, import_xml, list_modes, original_xml_paths,
 )
+from tracker.virtual import LIMIT as VIRTUAL_LIMIT, VirtualSource, VirtualTable
 from tracker.tension import (
     draw_tension_graph, roi_to_px, tension_color, tension_graph,
     tension_thresholds,
@@ -41,6 +48,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 CFG_PATH = os.path.join(HERE, "exhibit_config.json")
 CONFIGS_DIR = os.path.join(HERE, "..", "configs", "exhibit")
 STATIC_DIR = os.path.join(HERE, "static")
+TEST_OBJECTS_PATH = os.path.join(HERE, "test_objects.json")   # --test: virtual objects
 
 # OSC payload field order (list format = these positions; dict/json = keys).
 # `id` is the reacTIVision fiducial symbol id — the object's identity.
@@ -56,6 +64,7 @@ def id_bits(code_id):
 # Default payload format is JSON (one string argument: {"id": .., "x": .., ...});
 # per target it can be switched to list (positional) or dict (k, v, k, v ...).
 DEFAULT_OSC_FORMAT = "json"
+OSC_SEND_FPS_MAX = 120
 DEFAULT_OSC_TARGETS = [
     {"name": "SuperCollider", "host": "127.0.0.1", "port": 57120,
      "format": DEFAULT_OSC_FORMAT, "enabled": True},
@@ -68,6 +77,7 @@ EXHIBIT_DEFAULTS = {
     # OSC
     "osc_enabled": False,
     "osc_prefix": "/scramble",
+    "osc_send_fps": OSC_SEND_FPS_MAX,
     "osc_targets": [dict(t) for t in DEFAULT_OSC_TARGETS],
     # table region (normalized [x, y, w, h] of the camera frame) and object size
     "roi": None,
@@ -98,6 +108,17 @@ def safe_config_name(name):
         name = name[:-5]
     name = re.sub(r"[^\w \-가-힣]", "_", name).strip()
     return name[:64] or "config"
+
+
+def osc_send_fps(value):
+    """Valid test-mode OSC frame-rate limit, including values from old configs."""
+    try:
+        fps = float(value)
+        if not math.isfinite(fps):
+            raise ValueError("non-finite fps")
+        return max(1, min(OSC_SEND_FPS_MAX, int(fps)))
+    except (TypeError, ValueError, OverflowError):
+        return OSC_SEND_FPS_MAX
 
 
 def list_config_names():
@@ -153,10 +174,21 @@ def object_json(o, tension=0.0):
             "angle": round(o.angle, 1), "tension": tension}
 
 
+def hexagon_pts(cx, cy, r, angle_deg):
+    """Regular hexagon (circumradius r) rotated by angle_deg -> int32 points."""
+    pts = []
+    for k in range(6):
+        a = math.radians(angle_deg + 60.0 * k)
+        pts.append((int(round(cx + r * math.cos(a))), int(round(cy + r * math.sin(a)))))
+    return np.array(pts, np.int32)
+
+
 def draw_exhibit_overlay(W, H, objs, graph, rtv_status, tuio_fps, roi_px, rt,
-                         infer_on=True):
+                         infer_on=True, test_mode=False, hex_r=0.0, osc_fps=0.0):
     """Synthetic preview: reacTIVision owns the camera, so we draw what TUIO
-    tells us on a blank canvas at the capture aspect."""
+    tells us on a blank canvas at the capture aspect. In test mode the
+    virtual objects are drawn as hexagons sized so that two of them touch
+    edge-to-edge exactly at tension 1 (centre distance = d_near)."""
     vis = np.full((H, W, 3), 18, np.uint8)
     step = max(40, W // 16)
     for x in range(0, W, step):
@@ -168,10 +200,15 @@ def draw_exhibit_overlay(W, H, objs, graph, rtv_status, tuio_fps, roi_px, rt,
         cv2.rectangle(vis, (rx, ry), (rx2, ry2), (0, 220, 255), 2)
     side = float(rt.get("object_side_px", 0) or 0)
     radius = int(max(12, side * 0.35)) if side else 16
+    if test_mode and hex_r > 0:
+        radius = max(6, int(round(hex_r)))
     for o in objs:
         cx, cy = int(o.cx), int(o.cy)
         col = (255, 200, 0)
-        cv2.circle(vis, (cx, cy), radius, col, 2, cv2.LINE_AA)
+        if test_mode:
+            cv2.polylines(vis, [hexagon_pts(cx, cy, radius, o.angle)], True, col, 2, cv2.LINE_AA)
+        else:
+            cv2.circle(vis, (cx, cy), radius, col, 2, cv2.LINE_AA)
         a = math.radians(o.angle)
         ex, ey = int(cx + math.cos(a) * radius * 1.5), int(cy + math.sin(a) * radius * 1.5)
         cv2.line(vis, (cx, cy), (ex, ey), col, 2, cv2.LINE_AA)
@@ -182,8 +219,12 @@ def draw_exhibit_overlay(W, H, objs, graph, rtv_status, tuio_fps, roi_px, rt,
         draw_tension_graph(vis, graph)
     st = rtv_status or {}
     run = "RUN" if st.get("running") else "STOP"
-    hud = (f"reacTIVision {run} pid={st.get('pid') or '-'} {st.get('format') or '-'} "
-           f"tuio={tuio_fps:.0f}fps objs={len(objs)}")
+    if test_mode:
+        hud = (f"TEST (virtual, no reacTIVision) {W}x{H} "
+               f"input={tuio_fps:.0f}fps osc={osc_fps:.0f}fps objs={len(objs)}")
+    else:
+        hud = (f"reacTIVision {run} pid={st.get('pid') or '-'} {st.get('format') or '-'} "
+               f"tuio={tuio_fps:.0f}fps objs={len(objs)}")
     cv2.putText(vis, hud, (10, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.6,
                 (255, 255, 255), 2, cv2.LINE_AA)
     if not infer_on:
@@ -199,21 +240,28 @@ def draw_exhibit_overlay(W, H, objs, graph, rtv_status, tuio_fps, roi_px, rt,
 # ---------------------------------------------------------------- pipeline
 
 class ExhibitPipeline(threading.Thread):
-    """Owns the reacTIVision child + TUIO receiver. Every TUIO frame: ROI
-    normalize -> tension graph -> OSC to all targets. Overlay at <= 30 Hz."""
+    """Uses TUIO in exhibition mode or virtual frames in test mode.
+    Every frame: ROI normalize -> tension graph -> OSC to all targets."""
 
     OVERLAY_HZ = 20.0          # preview rate; OSC runs at the TUIO frame rate
+    test_mode = False          # --test: VirtualSource instead of reacTIVision/TUIO
+    virtual = None
+    _hex_r = 0.0
     PREVIEW_MAX_W = 800        # JPEG is encoded from a downscaled copy (cheap)
 
-    def __init__(self, autostart=None, exe_override=""):
+    def __init__(self, autostart=None, exe_override="", test_mode=False,
+                 test_objects_path=TEST_OBJECTS_PATH):
         super().__init__(daemon=True)
         self.lock = threading.Lock()
+        self.test_mode = bool(test_mode)
         self.rt = self._initial_config(exe_override)
-        if autostart is not None:
+        if autostart is not None and not self.test_mode:
             self.rt["rtv_autostart"] = bool(autostart)
         self.rtv = ReactivisionProcess(exe=exe_override)
+        self.virtual = VirtualTable(test_objects_path) if self.test_mode else None
+        self._hex_r = 0.0
         self.tuio = None
-        self._rtv_dirty = bool(self.rt.get("rtv_autostart", True))
+        self._rtv_dirty = bool(self.rt.get("rtv_autostart", True)) and not self.test_mode
         self._tuio_dirty = True
         self._osc_clients = {}
         self._graph = None
@@ -226,7 +274,10 @@ class ExhibitPipeline(threading.Thread):
                         "error": None}
         self.infer_on = True
         self.osc_fps = 0.0
-        self._osc_last_t = None
+        self._osc_sent_times = deque()
+        self._osc_rate_checked_t = None
+        self._osc_rate_tokens = 1.0
+        self._osc_rate_limit = OSC_SEND_FPS_MAX
         self._overlay_last = 0.0
         self._size = (0, 0)
         self._last_objs = []        # last TUIO objects with canvas cx/cy (for measurements)
@@ -242,6 +293,7 @@ class ExhibitPipeline(threading.Thread):
         saved = self._load_saved(CFG_PATH)
         if saved:
             rt.update({k: v for k, v in saved.items() if k in EXHIBIT_DEFAULTS})
+            rt["osc_send_fps"] = osc_send_fps(rt["osc_send_fps"])
         else:
             # first run: carry the current reacTIVision XML settings over, but
             # let the camera mode be chosen from the live -l list at 120 fps
@@ -293,6 +345,8 @@ class ExhibitPipeline(threading.Thread):
                     continue
                 if k == "osc_targets":
                     v = osc_targets({"osc_targets": v})
+                elif k == "osc_send_fps":
+                    v = osc_send_fps(v)
                 self.rt[k] = v
                 applied[k] = v
             if any(k.startswith("rtv_") for k in applied):
@@ -327,6 +381,7 @@ class ExhibitPipeline(threading.Thread):
             self.rt.update({k: v for k, v in data.items() if k in EXHIBIT_DEFAULTS})
             if "osc_targets" in data:
                 self.rt["osc_targets"] = osc_targets(self.rt)
+            self.rt["osc_send_fps"] = osc_send_fps(self.rt["osc_send_fps"])
             self._rtv_dirty = self._tuio_dirty = True
         if name:
             self.active_name = safe_config_name(name)
@@ -428,6 +483,8 @@ class ExhibitPipeline(threading.Thread):
         return self.rtv_state()
 
     def rtv_start(self):
+        if self.test_mode:
+            return self.rtv_state()
         with self.lock:
             self.rt["rtv_autostart"] = True
             self._rtv_dirty = True
@@ -456,6 +513,9 @@ class ExhibitPipeline(threading.Thread):
         exe = find_exe(rt.get("rtv_exe", ""))
         if not exe:
             return {"cameras": [], "exe": None, "error": "reacTIVision.exe 없음", "running": False}
+        if self.test_mode:              # never touch the camera (-l opens it)
+            return {"cameras": [], "exe": exe, "error": None, "running": False,
+                    "restarted": False, "test_mode": True, "t": time.time()}
         restarted = False
         if refresh and self.rtv.is_running():
             # `-l` lists no modes while the camera is held (by our own child
@@ -486,6 +546,7 @@ class ExhibitPipeline(threading.Thread):
             "last_fseq": t.last_fseq if t else -1,
             "objects": objs,
             "exe_found": bool(find_exe(self.get_rt().get("rtv_exe", ""))),
+            "test_mode": self.test_mode,
         })
         return st
 
@@ -493,7 +554,22 @@ class ExhibitPipeline(threading.Thread):
 
     TUIO_RETRY_S = 2.0         # re-bind interval after a failed bind (port busy)
 
+    def _ensure_test(self, rt):
+        """Test mode: fixed 120 fps virtual input, independent of saved camera
+        settings; the reacTIVision child is never started."""
+        self._rtv_dirty = False
+        if self._tuio_dirty or self.tuio is None:
+            if self.tuio is not None:
+                self.tuio.stop()
+            self.tuio = VirtualSource(self.virtual, fps=OSC_SEND_FPS_MAX)
+            self.tuio.on_frame = self._on_tuio_frame
+            self.tuio.start()
+            with self.lock:
+                self._tuio_dirty = False
+
     def _ensure(self, rt):
+        if self.test_mode:
+            return self._ensure_test(rt)
         port = int(rt["rtv_tuio_port"])
         now = time.perf_counter()
         # a failed bind (e.g. the previous server instance still held the
@@ -583,7 +659,11 @@ class ExhibitPipeline(threading.Thread):
                                or (self.tuio.on_frame_error if self.tuio else None))
                 vis = draw_exhibit_overlay(W, H, objs, self._graph, st,
                                            self.tuio.fps if self.tuio else 0.0,
-                                           roi_px, rt, self.infer_on)
+                                           roi_px, rt, self.infer_on,
+                                           test_mode=self.test_mode, hex_r=self._hex_r,
+                                           osc_fps=0.0 if stale else self.osc_fps)
+                if self.virtual is not None:
+                    self.virtual.save_if_dirty()
                 q = [cv2.IMWRITE_JPEG_QUALITY, int(rt.get("jpeg_quality") or 80)]
                 if vis.shape[1] > self.PREVIEW_MAX_W:   # cheap JPEG; OSC is not on this thread
                     s = self.PREVIEW_MAX_W / vis.shape[1]
@@ -611,6 +691,10 @@ class ExhibitPipeline(threading.Thread):
 
     # -- OSC -----------------------------------------------------------------
 
+    def _reset_osc_fps(self):
+        self.osc_fps = 0.0
+        self._osc_sent_times.clear()
+
     def _send_osc(self, rt, objs, frame_size, roi_px=None, send=True):
         """Tension graph (always, for the overlay) + per-object OSC to every
         enabled target when OSC is on and `send` is set. Returns the monitor
@@ -619,8 +703,6 @@ class ExhibitPipeline(threading.Thread):
         show_graph = bool(rt.get("show_graph", True))
         if not osc_on:
             self._osc_clients = {}
-            self.osc_fps = 0.0
-            self._osc_last_t = None
         w, h = frame_size
         if roi_px:
             ox, oy, x2, y2 = roi_px
@@ -631,6 +713,8 @@ class ExhibitPipeline(threading.Thread):
         side_px = float(rt.get("object_side_px", 0.0) or 0.0)
         long_px = max(rw, rh)
         d_near, d_far, self.tension_basis = tension_thresholds(rt, side_px, long_px)
+        # test-mode hexagon: apothem = d_near/2, so two plates touch at tension 1
+        self._hex_r = (d_near * long_px / 2.0) * 2.0 / math.sqrt(3.0)
         edges, node_t = tension_graph(
             known, long_px, d_near, d_far,
             str(rt.get("tension_connect", "mst")), str(rt.get("tension_fold", "max")),
@@ -639,10 +723,35 @@ class ExhibitPipeline(threading.Thread):
             if show_graph else None
         self._last_node_t = {o.track_id: t for o, t in zip(known, node_t)}
         if not osc_on or not send:
+            self._reset_osc_fps()
+            self._osc_rate_checked_t = None
+            self._osc_rate_tokens = 1.0
             return []
+
+        if self.test_mode:
+            limit = osc_send_fps(rt.get("osc_send_fps"))
+            now = time.perf_counter()
+            if limit != getattr(self, "_osc_rate_limit", OSC_SEND_FPS_MAX):
+                self._osc_rate_checked_t = None
+                self._osc_rate_tokens = 1.0
+                self._reset_osc_fps()
+            self._osc_rate_limit = limit
+            checked = getattr(self, "_osc_rate_checked_t", None)
+            tokens = getattr(self, "_osc_rate_tokens", 1.0)
+            if checked is not None:
+                earned = max(0.0, now - checked) * limit
+                # Preserve fractional credit across normal input frames, but
+                # do not burst after an input gap longer than one send period.
+                tokens = 1.0 if earned > 1.0 + 1e-6 else tokens + min(1.0, earned)
+            self._osc_rate_checked_t = now
+            if tokens < 1.0 - 1e-6:
+                self._osc_rate_tokens = tokens
+                return None
+            self._osc_rate_tokens = max(0.0, tokens - 1.0)
 
         targets = [t for t in osc_targets(rt) if t["enabled"]]
         if not targets:
+            self._reset_osc_fps()
             return [["osc", "대상 없음", ""]]
         keys = {(t["host"], t["port"]) for t in targets}
         for k in list(self._osc_clients):
@@ -654,6 +763,7 @@ class ExhibitPipeline(threading.Thread):
                 if k not in self._osc_clients:
                     self._osc_clients[k] = SimpleUDPClient(*k)
         except Exception as exc:
+            self._reset_osc_fps()
             return [["osc", f"client error: {exc}", ""]]
         prefix = str(rt.get("osc_prefix", "/scramble")).rstrip("/")
         # the monitor text (one row per message) is only needed at the UI
@@ -664,15 +774,18 @@ class ExhibitPipeline(threading.Thread):
         if want_log:
             self._log_last_t = now0
         log = [] if want_log else None
+        sent = False
 
         def norm(v, origin, span):   # clamp so receivers always get 0..1
             return round(max(0.0, min(1.0, (v - origin) / span)), 4)
 
         def emit(addr, values):
+            nonlocal sent
             for t in targets:
                 args = format_osc_args(t["format"], OSC_OBJ_FIELDS, values)
                 try:
                     self._osc_clients[(t["host"], t["port"])].send_message(addr, args)
+                    sent = True
                     if want_log:
                         log.append([addr, osc_args_text(t["format"], args), t["name"], t["format"]])
                 except Exception as exc:
@@ -685,13 +798,44 @@ class ExhibitPipeline(threading.Thread):
                   norm(o.cx, ox, rw), norm(o.cy, oy, rh),
                   round(float(o.angle), 2), t])
 
-        now = time.perf_counter()
-        if self._osc_last_t is not None:
-            dt = now - self._osc_last_t
-            if dt > 0:
-                self.osc_fps += 0.15 * (1.0 / dt - self.osc_fps)
-        self._osc_last_t = now
+        if sent:
+            now = time.perf_counter()
+            self._osc_sent_times.append(now)
+            while self._osc_sent_times and self._osc_sent_times[0] <= now - 1.0:
+                self._osc_sent_times.popleft()
+            self.osc_fps = float(len(self._osc_sent_times))
+        else:
+            self._reset_osc_fps()
         return log
+
+    # -- test mode: virtual objects -------------------------------------------
+
+    def object_action(self, body):
+        """/api/object: add | remove | clear | move | update (test mode only)."""
+        if self.virtual is None:
+            return {"ok": False, "error": "테스트 모드가 아닙니다 (test_start.command)"}
+        act = str(body.get("action") or "")
+        roi = self._rt_view().get("roi")
+        idx = int(body.get("index", -1)) if "index" in body else -1
+        if act == "add":
+            ok, err = self.virtual.add(roi)
+        elif act == "remove":
+            ok, err = self.virtual.remove(idx)
+        elif act == "clear":
+            ok, err = self.virtual.clear()
+        elif act == "move":
+            ok, err = self.virtual.move(idx, body.get("x", 0.5), body.get("y", 0.5), roi)
+        elif act == "update":
+            ok, err = self.virtual.update(idx, body.get("code_id"), body.get("tilt"))
+        else:
+            ok, err = False, f"알 수 없는 action: {act}"
+        return {"ok": ok, "error": err, **self.virtual_state()}
+
+    def virtual_state(self):
+        if self.virtual is None:
+            return {}
+        return {"objects": self.virtual.list(), "limit": VIRTUAL_LIMIT,
+                "hex_r": round(self._hex_r, 2), "canvas": list(self._size)}
 
     # -- misc ----------------------------------------------------------------
 
@@ -735,7 +879,13 @@ def make_app(pipe):
         return jsonify({"runtime": pipe.get_rt(), "results": results,
                         "rtv": pipe.rtv_state(), "osc_fields": OSC_OBJ_FIELDS,
                         "tension_basis": pipe.tension_basis,
-                        "active_name": pipe.active_name})
+                        "active_name": pipe.active_name,
+                        "test_mode": pipe.test_mode,
+                        "virtual": pipe.virtual_state()})
+
+    @app.post("/api/object")
+    def object_api():
+        return jsonify(pipe.object_action(request.get_json(force=True) or {}))
 
     @app.get("/api/configs")
     def configs():
@@ -822,14 +972,20 @@ def main():
     ap.add_argument("--rtv-exe", default="", help="reacTIVision.exe 경로 (기본: 자동 탐색)")
     ap.add_argument("--no-rtv", action="store_true",
                     help="reacTIVision을 자동 실행하지 않음 (수동 실행 시)")
+    ap.add_argument("--test", action="store_true",
+                    help="테스트: reacTIVision/TUIO 없이 가상 오브제(6각형, ID 0~24)로 동일 파이프라인 실행")
     args = ap.parse_args()
 
     pipe = ExhibitPipeline(autostart=(False if args.no_rtv else None),
-                           exe_override=args.rtv_exe)
+                           exe_override=args.rtv_exe, test_mode=args.test)
     pipe.start()
     app = make_app(pipe)
     exe = find_exe(args.rtv_exe or pipe.get_rt().get("rtv_exe", ""))
-    print(f"[exhibit] reacTIVision: {exe or 'NOT FOUND'}")
+    if args.test:
+        print("[exhibit] TEST MODE - reacTIVision/TUIO off, virtual objects "
+              f"({TEST_OBJECTS_PATH})")
+    else:
+        print(f"[exhibit] reacTIVision: {exe or 'NOT FOUND'}")
     print(f"[exhibit] http://localhost:{args.port}")
     try:
         app.run(host=args.host, port=args.port, threaded=True, debug=False,

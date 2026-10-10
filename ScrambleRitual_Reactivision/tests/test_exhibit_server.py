@@ -3,6 +3,7 @@ import os
 import tempfile
 import threading
 import unittest
+from collections import deque
 from unittest import mock
 
 from tracker.reactivision import ExhibitObject
@@ -29,7 +30,7 @@ def bare_pipeline(rt):
     p._last_node_t = {}
     p.tension_basis = ""
     p.osc_fps = 0.0
-    p._osc_last_t = None
+    p._osc_sent_times = deque()
     return p
 
 
@@ -140,6 +141,92 @@ class TestSendOsc(unittest.TestCase):
         log = p._send_osc(rt, [obj(1, 2, 10, 10)], (1280, 800), None)
         self.assertEqual(log[0][0], "osc")
 
+    def test_test_mode_osc_limit_skips_output_frames_only(self):
+        rt = {**self.rt, "osc_send_fps": 60}
+        p = bare_pipeline(rt)
+        p.test_mode = True
+        sample = [obj(1, 2, 10, 10)]
+        with mock.patch("pythonosc.udp_client.SimpleUDPClient", FakeClient):
+            for now, expected in [(0.0, 1), (0.005, 1), (0.017, 2),
+                                  (0.020, 2), (0.034, 3)]:
+                sample[0].cx = 10 + now * 1000
+                with mock.patch.object(X.time, "perf_counter", return_value=now):
+                    p._send_osc(rt, sample, (1280, 800))
+                self.assertEqual(len(FakeClient.sent[("127.0.0.1", 57120)]), expected)
+                self.assertEqual(p._graph[0][0][0], sample[0].cx)
+
+            # At 120, normally spaced input frames pass, but a burst is capped.
+            rt["osc_send_fps"] = 120
+            for now in (0.035, 0.0435):
+                with mock.patch.object(X.time, "perf_counter", return_value=now):
+                    p._send_osc(rt, sample, (1280, 800))
+            self.assertEqual(len(FakeClient.sent[("127.0.0.1", 57120)]), 5)
+            with mock.patch.object(X.time, "perf_counter", return_value=0.0436):
+                p._send_osc(rt, sample, (1280, 800))
+            self.assertEqual(len(FakeClient.sent[("127.0.0.1", 57120)]), 5)
+
+    def test_test_mode_rate_change_and_pause_send_immediately(self):
+        rt = {**self.rt, "osc_send_fps": 1}
+        p = bare_pipeline(rt)
+        p.test_mode = True
+        sample = [obj(1, 2, 10, 10)]
+        with mock.patch("pythonosc.udp_client.SimpleUDPClient", FakeClient):
+            for now, send in [(1.0, True), (1.01, False), (1.02, False)]:
+                if now == 1.02:
+                    rt["osc_send_fps"] = 10
+                with mock.patch.object(X.time, "perf_counter", return_value=now):
+                    result = p._send_osc(rt, sample, (1280, 800))
+                self.assertEqual(result is not None, send)
+            with mock.patch.object(X.time, "perf_counter", return_value=1.03):
+                p._send_osc(rt, sample, (1280, 800), send=False)
+                p._send_osc(rt, sample, (1280, 800))
+        self.assertEqual(len(FakeClient.sent[("127.0.0.1", 57120)]), 3)
+
+    def test_test_mode_message_density_tracks_selected_fps(self):
+        for limit in (30, 60, 90, 120):
+            FakeClient.sent = {}
+            rt = {**self.rt, "osc_send_fps": limit}
+            p = bare_pipeline(rt)
+            p.test_mode = True
+            with mock.patch("pythonosc.udp_client.SimpleUDPClient", FakeClient):
+                for frame in range(120):
+                    with mock.patch.object(X.time, "perf_counter", return_value=frame / 120):
+                        p._send_osc(rt, [obj(1, 2, 10, 10)], (1280, 800))
+            self.assertLessEqual(abs(len(FakeClient.sent[("127.0.0.1", 57120)]) - limit), 1)
+
+    def test_reported_osc_fps_uses_successful_network_sends(self):
+        rt = {**self.rt, "osc_send_fps": 60}
+        p = bare_pipeline(rt)
+        p.test_mode = True
+        sample = [obj(1, 2, 10, 10)]
+        with mock.patch("pythonosc.udp_client.SimpleUDPClient", FakeClient):
+            for frame in range(120):
+                with mock.patch.object(X.time, "perf_counter", return_value=frame / 120):
+                    p._send_osc(rt, sample, (1280, 800))
+            self.assertGreater(p.osc_fps, 50)
+            self.assertLess(p.osc_fps, 70)
+
+            for client in p._osc_clients.values():
+                client.send_message = mock.Mock(side_effect=OSError("send failed"))
+            with mock.patch.object(X.time, "perf_counter", return_value=1.02):
+                p._send_osc(rt, sample, (1280, 800))
+            self.assertEqual(p.osc_fps, 0.0)
+            self.assertEqual(len(p._osc_sent_times), 0)
+
+            with mock.patch.object(X.time, "perf_counter", return_value=1.04):
+                p._send_osc(rt, sample, (1280, 800), send=False)
+            self.assertEqual(p.osc_fps, 0.0)
+
+    def test_exhibition_output_ignores_test_only_limit(self):
+        rt = {**self.rt, "osc_send_fps": 1}
+        p = bare_pipeline(rt)
+        sample = [obj(1, 2, 10, 10)]
+        with mock.patch("pythonosc.udp_client.SimpleUDPClient", FakeClient):
+            for now in (0.0, 0.001):
+                with mock.patch.object(X.time, "perf_counter", return_value=now):
+                    p._send_osc(rt, sample, (1280, 800))
+        self.assertEqual(len(FakeClient.sent[("127.0.0.1", 57120)]), 2)
+
 
 class TestConfig(unittest.TestCase):
     def setUp(self):
@@ -164,6 +251,22 @@ class TestConfig(unittest.TestCase):
         self.assertEqual(p.rt["rtv_width"], 0)
         self.assertEqual([t["port"] for t in p.rt["osc_targets"]], [57120, 7000])
         self.assertFalse(p.rt["rtv_autostart"])
+        self.assertEqual(p.rt["osc_send_fps"], 120)
+
+    def test_osc_fps_limit_is_clamped_and_saved(self):
+        p = X.ExhibitPipeline(autostart=False)
+        self.assertEqual(p.update({"osc_send_fps": 240})["osc_send_fps"], 120)
+        self.assertEqual(p.update({"osc_send_fps": 0})["osc_send_fps"], 1)
+        self.assertEqual(p.update({"osc_send_fps": "60"})["osc_send_fps"], 60)
+        p.save_cfg()
+        self.assertEqual(X.ExhibitPipeline(autostart=False).rt["osc_send_fps"], 60)
+
+    def test_test_mode_input_stays_at_120_when_camera_config_is_slower(self):
+        p = X.ExhibitPipeline(test_mode=True, test_objects_path=os.path.join(self.tmp.name, "objects.json"))
+        p.update({"rtv_fps": 30})
+        with mock.patch.object(X, "VirtualSource") as source:
+            p._ensure_test(p.rt)
+        source.assert_called_once_with(p.virtual, fps=120)
 
     def test_update_whitelist_and_dirty(self):
         p = X.ExhibitPipeline(autostart=False)

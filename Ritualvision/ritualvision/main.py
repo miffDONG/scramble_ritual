@@ -25,9 +25,9 @@ from .tracker import Tracker
 from .tuio import TuioSender
 
 
-# The same keys as reacTIVision 1.5.1 (its own help text), for what Ritualvision has, plus F12
-# for snapshots, which reacTIVision does not use. reacTIVision keys for things Ritualvision has
-# no counterpart of (calibration c a d w x j k l q r, finger f, invert i, SPACE) do nothing.
+# Exactly reacTIVision 1.5.1's keys (its own help text) and nothing else. reacTIVision keys for
+# things Ritualvision has no counterpart of (calibration c a d w x j k l q r, finger f,
+# invert i, SPACE) do nothing.
 # Letters also work with Caps Lock and with the Korean input mode on (2-beolsik jamo).
 KEYS = {
     "source": ("s", "S", "ㄴ"),         # camera image
@@ -45,7 +45,6 @@ KEYCODES = {code: name for name, chars in KEYS.items() for code in map(ord, char
 # function and arrow keys: waitKeyEx on Windows reports the virtual-key code << 16
 SPECIAL_KEYS = {
     0x700000: "fullscreen",             # F1
-    0x7B0000: "snap",                   # F12
     0x250000: "left", 0x260000: "up", 0x270000: "right", 0x280000: "down",
 }
 
@@ -137,7 +136,6 @@ def main(argv=None):
     show_help, paused, adjust, verbose, fullscreen = False, False, False, False, False
     msg, msg_until, verbose_t = "", 0.0, 0.0
     last_no, frames, t_fps, fps = -1, 0, time.perf_counter(), 0.0
-    snap_dir = os.path.join(args.config_dir or base_dir(), "snapshots")
 
     try:
         while True:
@@ -215,13 +213,6 @@ def main(argv=None):
                                           cv2.WINDOW_FULLSCREEN if fullscreen else cv2.WINDOW_NORMAL)
                 elif act == "help":
                     show_help = not show_help
-                elif act == "snap":
-                    os.makedirs(snap_dir, exist_ok=True)
-                    stamp = time.strftime("%Y%m%d_%H%M%S")
-                    cv2.imwrite(os.path.join(snap_dir, f"{stamp}_frame.png"), frame)
-                    cv2.imwrite(os.path.join(snap_dir, f"{stamp}_view.png"), view(False))
-                    cv2.imwrite(os.path.join(snap_dir, f"{stamp}_mask.png"), view(True))
-                    msg, msg_until = f"saved snapshots/{stamp} (frame, view, mask)", now + 2.0
             if args.source and not args.once:
                 time.sleep(1 / 60)
     except KeyboardInterrupt:

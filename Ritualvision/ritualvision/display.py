@@ -19,11 +19,11 @@ GREY = (150, 150, 150)
 
 TILE_PER_RC = 1.0 / (0.76 * 2 / math.sqrt(3))     # tile vertex radius / fold arm length
 
-# reacTIVision's keys (same letters, same meaning) + F12 snapshot
+# reacTIVision 1.5.1 keys (same letters, same meaning)
 HELP = ["s  source image", "t  target image (line mask)", "n  no image",
         "g  threshold: offset (up/down) / window (left/right)", "o  camera options",
         "e  toggle frame equalizer", "p  pause processing", "v  verbose output (console)",
-        "F1  toggle fullscreen", "F12  save snapshot", "h  toggle help text", "ESC  quit"]
+        "F1  toggle fullscreen", "h  toggle help text", "ESC  quit"]
 
 
 def _hexagon(cx, cy, radius, first_vertex_deg):

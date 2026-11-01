@@ -25,7 +25,7 @@ from .tracker import Tracker
 from .tuio import TuioSender
 
 
-# Exactly reacTIVision 1.5.1's keys (its own help text) and nothing else. reacTIVision keys for
+# reacTIVision 1.5.1's keys (its own help text), plus m (marker overlay). reacTIVision keys for
 # things Ritualvision has no counterpart of (calibration c a d w x j k l q r, finger f,
 # invert i, SPACE) do nothing.
 # Letters also work with Caps Lock and with the Korean input mode on (2-beolsik jamo).
@@ -39,6 +39,7 @@ KEYS = {
     "pause": ("p", "P", "ㅔ"),
     "verbose": ("v", "V", "ㅍ"),        # print the markers to the console
     "help": ("h", "H", "ㅗ"),
+    "overlay": ("m", "M", "ㅡ"),        # Ritualvision only: marker drawings on/off
     "esc": ("\x1b",),                   # quit
 }
 KEYCODES = {code: name for name, chars in KEYS.items() for code in map(ord, chars)}
@@ -134,6 +135,7 @@ def main(argv=None):
     # display mode as in reacTIVision.xml <image display>: src | dest | none
     display = "dest" if args.mask else (app.display if app.display in ("src", "dest", "none") else "src")
     show_help, paused, adjust, verbose, fullscreen = False, False, False, False, False
+    overlay = True                      # m: ID / hexagon drawings over the image
     msg, msg_until, verbose_t = "", 0.0, 0.0
     last_no, frames, t_fps, fps = -1, 0, time.perf_counter(), 0.0
 
@@ -180,7 +182,7 @@ def main(argv=None):
                              f"window {rec.block}   left / right")
                 view = lambda as_mask, hlp=False, m="": draw(
                     frame, rec.mask, markers, as_mask, fps, rec.offset, hlp, m, rec.block,
-                    size_status, rec.last_noise, lines)
+                    size_status, rec.last_noise, lines, overlay)
                 if display == "none":
                     img = no_image(fps, markers, show_help, msg, lines)
                 else:
@@ -213,6 +215,9 @@ def main(argv=None):
                                           cv2.WINDOW_FULLSCREEN if fullscreen else cv2.WINDOW_NORMAL)
                 elif act == "help":
                     show_help = not show_help
+                elif act == "overlay":
+                    overlay = not overlay
+                    msg, msg_until = f"marker overlay {'on' if overlay else 'off'}", now + 1.5
             if args.source and not args.once:
                 time.sleep(1 / 60)
     except KeyboardInterrupt:

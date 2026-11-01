@@ -23,7 +23,8 @@ TILE_PER_RC = 1.0 / (0.76 * 2 / math.sqrt(3))     # tile vertex radius / fold ar
 HELP = ["s  source image", "t  target image (line mask)", "n  no image",
         "g  threshold: offset (up/down) / window (left/right)", "o  camera options",
         "e  toggle frame equalizer", "p  pause processing", "v  verbose output (console)",
-        "F1  toggle fullscreen", "h  toggle help text", "ESC  quit"]
+        "F1  toggle fullscreen", "h  toggle help text", "ESC  quit",
+        "m  marker overlay on/off (Ritualvision only)"]
 
 
 def _hexagon(cx, cy, radius, first_vertex_deg):
@@ -48,12 +49,14 @@ def _label(img, text, org, scale, color, thick):
 
 
 def draw(frame, mask, markers, show_mask, fps, offset, show_help, msg="", block=15,
-         size_state="", noise=0, overlay_lines=()):
+         size_state="", noise=0, overlay_lines=(), overlay=True):
+    """overlay=False: no marker drawings (hexagons, IDs, fold lines, dashes, arrows) on the
+    image; the status text stays."""
     if show_mask and mask is not None:
         img = cv2.cvtColor(255 - mask, cv2.COLOR_GRAY2BGR)
     else:
         img = frame.copy() if frame.ndim == 3 else cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
-    for m in markers:
+    for m in (markers if overlay else ()):
         ok = m.fid >= 0
         col = GREEN if ok else RED
         # hexagon implied by the fold line

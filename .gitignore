@@ -32,3 +32,7 @@ Ritualvision/Ritualvision.exe
 Ritualvision/build.log
 Ritualvision/snapshots/
 Ritualvision/ritualvision_state.json
+# backups the exhibit server makes the first time it writes Ritualvision's XML files
+Ritualvision/*.orig
+# local preview-server config for this checkout
+/.claude/

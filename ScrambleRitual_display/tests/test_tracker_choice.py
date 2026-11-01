@@ -5,6 +5,8 @@ import unittest
 from unittest import mock
 
 from tracker import reactivision as RV
+from tracker.engines import get_engine
+from tracker.engines import reactivision as ERT, ritualvision as ERV
 from webui import exhibit_server as X
 
 
@@ -35,15 +37,15 @@ class TrackerChoiceTest(unittest.TestCase):
         self.assertEqual(X.ExhibitPipeline(autostart=False).rt["tracker"], "reactivision")
 
     def test_tracker_exe(self):
-        with mock.patch.object(RV, "find_ritualvision", return_value="C:/x/Ritualvision.exe"), \
-                mock.patch.object(RV, "find_exe", return_value="C:/y/reacTIVision.exe"):
+        with mock.patch.object(ERV, "find_ritualvision", return_value="C:/x/Ritualvision.exe"), \
+                mock.patch.object(ERT, "find_exe", return_value="C:/y/reacTIVision.exe"):
             self.assertEqual(RV.tracker_exe({"tracker": "ritualvision"}), ("ritualvision", "C:/x/Ritualvision.exe"))
             self.assertEqual(RV.tracker_exe({"tracker": "reactivision"}), ("reactivision", "C:/y/reacTIVision.exe"))
             self.assertEqual(RV.tracker_exe({"tracker": "bogus"})[0], "reactivision")
 
     def test_ritualvision_has_no_mode_listing(self):
-        with mock.patch.object(RV.subprocess, "run") as run:
-            out = RV.list_modes("C:/x/Ritualvision.exe")
+        with mock.patch.object(ERT.subprocess, "run") as run:
+            out = get_engine("ritualvision").list_modes("C:/x/Ritualvision.exe")
         run.assert_not_called()
         self.assertEqual(out["cameras"], [])
         self.assertIsNone(out["error"])

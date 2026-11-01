@@ -92,16 +92,23 @@
     background: #0b0d10; padding: 8px; border-radius: 6px; margin: 4px 0 0; white-space: pre-wrap; }
   #rtvStatus { font-size: 12.5px; padding: 6px 8px; border-radius: 6px; background: var(--panel2); margin-top: 6px; }
   #rtvStatus.ok { border-left: 3px solid var(--ok); } #rtvStatus.bad { border-left: 3px solid var(--bad); }
+  /* tracker switch: fields of the engine not selected in the switch are hidden */
+  body.sel-reactivision .eng-rv, body.sel-ritualvision .eng-rtv { display: none !important; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .seg button { background: transparent; color: var(--dim); border: 0; padding: 6px 14px; cursor: pointer; font: inherit; }
+  .seg button.on { background: var(--accent); color: #101216; font-weight: 600; }
+  .restart { font-weight: 600; } .restart.restarting { color: var(--warn, #fb3); }
+  .restart.playing { color: var(--ok); } .restart.failed { color: var(--bad); }
   #toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%);
     background: var(--accent); color: #101216; padding: 8px 18px; border-radius: 8px;
     opacity: 0; transition: opacity .25s; pointer-events: none; font-weight: 600; z-index: 20; }
 </style>
 </head>
-<body>
+<body class="sel-reactivision">
 <header>
   <h1>Scramble Ritual · 전시<span class="test-only" style="color:var(--info)"> · 테스트</span></h1>
   <span class="badge bad test-only" title="reacTIVision 신호를 받지 않고 가상 오브제로 동작">TEST · 가상 오브제</span>
-  <span class="badge rtv-only" id="rtvBadge">reacTIVision -</span>
+  <span class="badge rtv-only" id="rtvBadge">트래커 -</span>
   <span class="badge" id="tuioBadge">TUIO -</span>
   <span class="badge" id="oscBadge" title="OSC 실제 송신 주기와 사이클당 메시지 수">OSC 끔</span>
   <label class="badge" id="idfixTop" title="마커 ID 보정 ON/OFF (3+ 카드)" style="cursor:pointer"><input type="checkbox" id="idfixTopChk" onchange="postOpt('idfix_enabled', this.checked); $('idfix_enabled').checked = this.checked"> ID 보정</label>
@@ -161,7 +168,15 @@
     </div>
 
     <div class="card rtv-only">
-      <h2><span class="step">1</span>전시 카메라 (reacTIVision)</h2>
+      <h2><span class="step">1</span>전시 카메라 · 트래커</h2>
+      <div class="row">
+        <span class="seg" id="trackerSeg">
+          <button type="button" data-tracker="reactivision" onclick="selectTracker('reactivision')">reacTIVision</button>
+          <button type="button" data-tracker="ritualvision" onclick="selectTracker('ritualvision')">Ritualvision</button>
+        </span>
+        <span class="hint" id="trackerHint"></span>
+      </div>
+      <p class="hint">reacTIVision = amoeba 마커, Ritualvision = 엣지 대시 마커. 두 프로그램이 카메라를 동시에 쓸 수 없어서 <b>적용 (재시작)</b>을 눌러야 바뀝니다. 아래 칸은 선택한 트래커의 설정만 보입니다.</p>
       <label class="flabel">카메라</label>
       <div class="row">
         <select id="rtvCam" style="flex:1" onchange="fillRes()"></select>
@@ -202,18 +217,24 @@
         </div>
       </details>
       <details open>
-        <summary>인식 설정 (reacTIVision.xml)</summary>
+        <summary>인식 설정 <span class="eng-rtv">(reacTIVision.xml)</span><span class="eng-rv">(ritualvision.xml)</span></summary>
         <div class="body grid2">
+          <div class="grid">
+            <label title="트래커가 TUIO를 보내는 UDP 포트. 서버가 이 포트에서 수신">TUIO port</label><input type="number" id="rtv_tuio_port" min="1024" max="65535">
+          </div>
+          <div class="grid">
+            <label title="트래커 창에 보이는 영상: src 원본 / dest 이진화 / none 없음">display</label>
+            <select id="rtv_display"><option value="src">src (원본)</option><option value="dest">dest (이진화)</option><option value="none">none</option></select>
+          </div>
+        </div>
+        <div class="body grid2 eng-rtv" style="padding-top:0">
           <div class="grid">
             <label title="이진화 gradient gate (기본 32). 낮을수록 민감">gradient</label><input type="number" id="rtv_gradient" min="0" max="255">
             <label title="이진화 tile size (기본 10)">tile</label><input type="number" id="rtv_tile" min="1" max="64">
             <label title="0 = 손가락 추적 끔">finger size</label><input type="number" id="rtv_finger_size" min="0" max="64">
             <label>finger sens.</label><input type="number" id="rtv_finger_sensitivity" min="0" max="200">
-            <label title="reacTIVision 창에 보이는 영상: src 원본 / dest 이진화 / none 없음">display</label>
-            <select id="rtv_display"><option value="src">src (원본)</option><option value="dest">dest (이진화)</option><option value="none">none</option></select>
           </div>
           <div class="grid">
-            <label title="reacTIVision이 TUIO를 보내는 UDP 포트. 서버가 이 포트에서 수신">TUIO port</label><input type="number" id="rtv_tuio_port" min="1024" max="65535">
             <label>engine</label>
             <select id="rtv_engine"><option value="amoeba">amoeba</option><option value="classic">classic</option></select>
             <label title="비우면 기본 default.trees. small → symbols/amoeba/small.trees, legacy → legacy.trees">tree</label><input type="text" id="rtv_tree" placeholder="(기본)">
@@ -221,9 +242,23 @@
             <label title="x, y, a 조합 (예: xya). 비우면 없음">invert</label><input type="text" id="rtv_calib_invert">
           </div>
         </div>
+        <div class="body grid2 eng-rv" style="padding-top:0">
+          <div class="grid">
+            <label title="선 판정 국소 임계값 창 크기 px (홀수, 기본 15). Ritualvision 창의 , . 키와 같음">window</label><input type="number" id="rv_block" min="3" max="101" step="2">
+            <label title="주변 평균보다 이만큼 어두우면 선 (기본 12). 선이 끊기면 내리고, 잡음이 많으면 올림. Ritualvision 창의 [ ] 키와 같음">offset</label><input type="number" id="rv_offset" min="1" max="80" step="1">
+          </div>
+          <div class="grid">
+            <label title="놓친 마커를 유지할 프레임 수 (기본 3)">hold</label><input type="number" id="rv_hold" min="0" max="60">
+            <label title="ID 표 파일 (Ritualvision 폴더 기준)">ids</label><input type="text" id="rv_ids">
+          </div>
+        </div>
+        <div class="body eng-rv" style="padding-top:0">
+          <label title="선이 타일보다 밝게 찍힐 때"><input type="checkbox" id="rv_invert"> 밝은 선(invert)</label>
+          <p class="hint" id="rvSizeSummary">크기 필터: -</p>
+        </div>
         <div class="body row" style="padding-top:0">
           <label><input type="checkbox" id="rtv_equalize"> 배경 차감(equalize)</label>
-          <label title="reacTIVision 창 없이 실행(TUIO는 동일하게 나옴). 이 모드는 콘솔에 format 줄을 찍지 않아 상태의 해상도가 '(설정값)'으로 표시됨"><input type="checkbox" id="rtv_no_window"> 창 없이 실행(-n)</label>
+          <label title="트래커 창 없이 실행(TUIO는 동일하게 나옴). reacTIVision은 이 모드에서 콘솔에 format 줄을 찍지 않아 상태의 해상도가 '(설정값)'으로 표시됨"><input type="checkbox" id="rtv_no_window"> 창 없이 실행(-n)</label>
           <label><input type="checkbox" id="rtv_autostart"> 서버 시작 시 자동 실행</label>
         </div>
       </details>
@@ -231,12 +266,13 @@
         <button class="btn primary" onclick="applyRtv()">적용 (재시작)</button>
         <button class="btn" onclick="rtvCtl('start')">시작</button>
         <button class="btn danger" onclick="rtvCtl('stop')">정지</button>
-        <button class="btn" onclick="rtvImport()" title="reacTIVision 폴더의 camera.xml / reacTIVision.xml 값을 읽어옴">XML 가져오기</button>
+        <button class="btn" onclick="rtvImport()" title="선택한 트래커 폴더의 설정 파일 값을 읽어옴">XML 가져오기</button>
       </div>
       <div id="rtvStatus">-</div>
-      <details id="logDetails"><summary>reacTIVision 로그</summary><div class="body"><pre id="rtvLog"></pre></div></details>
+      <details id="logDetails"><summary>트래커 로그</summary><div class="body"><pre id="rtvLog"></pre></div></details>
       <div class="grid" style="margin-top:6px">
-        <label title="비우면 %USERPROFILE%\scramble_ritual\reactivision → Downloads 순으로 자동 탐색">exe 경로</label><input type="text" id="rtv_exe" placeholder="(자동)">
+        <label class="eng-rtv" title="비우면 %USERPROFILE%\scramble_ritual\reactivision → Downloads 순으로 자동 탐색">exe 경로</label><input class="eng-rtv" type="text" id="rtv_exe" placeholder="(자동)">
+        <label class="eng-rv" title="비우면 %USERPROFILE%\scramble_ritual\Ritualvision\Ritualvision.exe">exe 경로</label><input class="eng-rv" type="text" id="ritualvision_exe" placeholder="(자동)">
       </div>
     </div>
 
@@ -247,6 +283,19 @@
       <div class="row">
         <button class="btn primary" onclick="measureContact()">접촉 거리 측정</button>
         <span class="badge info" id="contactBadge">접촉 -</span>
+      </div>
+      <div id="sizeBlock" style="display:none">
+        <p class="hint" id="sizeInfo">크기 기준 -</p>
+        <div class="row">
+          <label title="켜면 Ritualvision이 기준 크기 ± 허용 범위 밖의 접힌 선을 버립니다 (TUIO로 보내지 않음). 바꾸면 Ritualvision이 자동으로 다시 시작합니다"><input type="checkbox" id="rv_size_on" onchange="postOpt('rv_size_on', this.checked)"> Ritualvision 크기 필터에 적용</label>
+        </div>
+        <div class="row">
+          <label title="기준 크기보다 이만큼 작아도 인정 (렌즈 가장자리에서 작게 찍히면 넓힘)">허용 −<input type="number" id="rv_size_lo_pct" min="0" max="50" step="1" style="width:58px" onchange="postOpt('rv_size_lo_pct', +this.value)">%</label>
+          <label title="기준 크기보다 이만큼 커도 인정. 14% 이상이면 외곽선과 붙은 접힌 선을 거르지 못함">+<input type="number" id="rv_size_hi_pct" min="0" max="50" step="1" style="width:58px" onchange="postOpt('rv_size_hi_pct', +this.value)">%</label>
+          <span class="hint" id="sizeRange"></span>
+        </div>
+        <p class="hint bad" id="sizeWarn"></p>
+        <p class="hint" id="restartInfo"></p>
       </div>
       <label class="flabel">② 실측 치수 (폴백) — 카메라와 무관한 비율</label>
       <div class="grid">
@@ -400,13 +449,30 @@ async function toggleInfer() {
   $('inferBtn').className = inferOn ? 'btn primary' : 'btn danger';
 }
 
-/* ---------- reacTIVision panel ---------- */
+/* ---------- tracker panel (reacTIVision / Ritualvision) ---------- */
 const RTV_TEXT = ['rtv_exposure','rtv_gain','rtv_brightness','rtv_contrast','rtv_gamma','rtv_sharpness',
   'rtv_focus','rtv_shutter','rtv_frame_width','rtv_frame_height','rtv_tree','rtv_calib_file',
-  'rtv_calib_invert','rtv_exe','rtv_display','rtv_engine'];
+  'rtv_calib_invert','rtv_exe','rtv_display','rtv_engine','ritualvision_exe','rv_ids'];
 const RTV_NUM = ['rtv_xoff','rtv_yoff','rtv_gradient','rtv_tile','rtv_finger_size',
-  'rtv_finger_sensitivity','rtv_tuio_port'];
-const RTV_BOOL = ['rtv_equalize','rtv_no_window','rtv_autostart'];
+  'rtv_finger_sensitivity','rtv_tuio_port','rv_block','rv_offset','rv_hold'];
+const RTV_BOOL = ['rtv_equalize','rtv_no_window','rtv_autostart','rv_invert'];
+const TRACKER_LABEL = {reactivision: 'reacTIVision', ritualvision: 'Ritualvision'};
+let selTracker = 'reactivision';      // the switch (applied with 적용)
+let runEngine = null;                 // the engine of the running / last started process
+function selectTracker(name) {
+  selTracker = TRACKER_LABEL[name] ? name : 'reactivision';
+  document.body.classList.toggle('sel-reactivision', selTracker === 'reactivision');
+  document.body.classList.toggle('sel-ritualvision', selTracker === 'ritualvision');
+  for (const b of $('trackerSeg').querySelectorAll('button'))
+    b.classList.toggle('on', b.dataset.tracker === selTracker);
+  updateTrackerHint();
+}
+function updateTrackerHint() {
+  const pending = rtCache && selTracker !== rtCache.tracker;
+  $('trackerHint').innerHTML = pending
+    ? `${TRACKER_LABEL[selTracker]} 전환은 <b class="bad">적용 (재시작)</b>을 눌러야 반영됩니다`
+    : (runEngine ? `현재 ${TRACKER_LABEL[runEngine] || runEngine}` : '');
+}
 
 async function loadRtvModes(refresh) {
   const d = await api('/api/rtv/modes' + (refresh ? '?refresh=1' : ''));
@@ -495,10 +561,11 @@ function fillRtvForm(rt) {
   for (const k of RTV_TEXT) if ($(k)) $(k).value = rt[k] ?? '';
   for (const k of RTV_NUM) if ($(k)) $(k).value = rt[k] ?? 0;
   for (const k of RTV_BOOL) if ($(k)) $(k).checked = !!rt[k];
+  selectTracker(rt.tracker);
   if (modes) { $('rtvCam').value = rt.rtv_camera; fillRes(); }
 }
 function collectRtv() {
-  const out = {};
+  const out = { tracker: selTracker };
   for (const k of RTV_TEXT) if ($(k)) out[k] = $(k).value.trim();
   for (const k of RTV_NUM) if ($(k)) out[k] = +$(k).value;
   for (const k of RTV_BOOL) if ($(k)) out[k] = $(k).checked;
@@ -519,12 +586,13 @@ function collectRtv() {
 async function applyRtv() {
   const st = await api('/api/rtv/apply', collectRtv());
   await api('/api/config/save', {});
-  toast('적용 — reacTIVision 재시작');
+  if (rtCache) rtCache.tracker = selTracker;
+  toast(`적용 — ${TRACKER_LABEL[selTracker]} 재시작`);
   renderRtvStatus(st);
 }
 async function rtvCtl(a) {
   const st = await api('/api/rtv/' + a, {});
-  toast(a === 'start' ? 'reacTIVision 시작' : 'reacTIVision 정지');
+  toast(`${TRACKER_LABEL[selTracker]} ${a === 'start' ? '시작' : '정지'}`);
   renderRtvStatus(st);
 }
 async function rtvImport() {
@@ -537,8 +605,14 @@ async function rtvImport() {
 function renderRtvStatus(st) {
   const el = $('rtvStatus');
   if (!st) return;
+  const label = st.engine_label || TRACKER_LABEL[st.engine] || '트래커';
+  runEngine = st.engine || null;
+  updateTrackerHint();
   const parts = [];
-  parts.push(st.running ? `<b class="ok">실행중</b> pid ${st.pid}` : '<b class="bad">정지</b>');
+  const rs = st.restart || {};
+  if (rs.label) parts.push(`<span class="restart ${rs.phase}">${rs.label}</span>`
+                           + (rs.phase === 'failed' && rs.reason ? ` <span class="bad">${rs.reason}</span>` : ''));
+  parts.push(st.running ? `<b class="ok">실행중</b> ${label} · pid ${st.pid}` : `<b class="bad">정지</b> ${label}`);
   if (st.format) parts.push(`${st.format}${st.format_source === 'stdout' ? '' : ' (설정값)'}`);
   if (st.camera) parts.push(st.camera);
   parts.push(`TUIO :${st.tuio_port ?? '-'} ${st.tuio_fps ?? 0}fps`);
@@ -553,7 +627,8 @@ function renderRtvStatus(st) {
     lastFormat = st.format;
     if (first && !$('rtvRes').options.length) fillRes();   // list was empty: show the running mode
   }
-  $('rtvBadge').textContent = 'reacTIVision ' + (st.running ? (st.format || '실행') : '정지');
+  $('rtvBadge').textContent = label + ' ' + (rs.phase === 'restarting' ? rs.label
+                                            : st.running ? (st.format || '실행') : '정지');
   $('rtvBadge').className = 'badge rtv-only ' + (st.running && !st.error ? 'ok' : 'bad');
   $('tuioBadge').textContent = (testMode ? '가상 ' : 'TUIO ') + `${st.tuio_fps ?? 0}fps`;
   $('tuioBadge').className = 'badge ' + ((st.tuio_fps || 0) > 1 ? 'ok' : '');
@@ -601,11 +676,42 @@ function applyTargets() { postOpt('osc_targets', readTargets()); toast('OSC 대�
 
 /* ---------- contact distance (tension d_near) ---------- */
 async function measureContact() {
+  toast('측정 중…');
   const r = await api('/api/tension/measure_contact', {});
   if (!r.ok) return toast('측정 실패: ' + r.error);
   await api('/api/config/save', {});
   $('tension_contact').value = r.tension_contact; $('object_side_px').value = 0;
-  toast(`접촉 거리 = ${r.tension_contact} (id ${r.ids.join(' · ')}, ${r.distance_px}px)`);
+  toast(`접촉 거리 = ${r.tension_contact} (id ${r.ids.join(' · ')}, ${r.distance_px}px)`
+        + (r.size_ref_px ? ` · 크기 기준 ${r.size_ref_px}px` : '')
+        + (r.restart ? ' · Ritualvision 다시 시작' : ''));
+}
+/* size reference (Ritualvision): shown with the contact measurement */
+function renderSize(rt, rtv) {
+  const show = testMode || rt.tracker === 'ritualvision';
+  $('sizeBlock').style.display = show ? '' : 'none';
+  const ref = +rt.rv_size_ref_px || 0, lo = +rt.rv_size_lo_pct || 0, hi = +rt.rv_size_hi_pct || 0;
+  const ratioOk = rt.rv_size_shape > 0;
+  $('sizeInfo').innerHTML = ref > 0
+    ? `크기 기준 <b>${ref}px</b>${ratioOk ? ` · 형상 ${rt.rv_size_shape} ✓` : ''} · 흔들림 ±${rt.rv_size_sigma_pct || 0}%`
+    : '크기 기준 없음 — Ritualvision 사용 중 접촉 거리를 측정하면 같은 두 마커로 함께 잽니다';
+  const rng = rtv && rtv.size_range;
+  $('sizeRange').textContent = rng ? `→ ${rng[0]} ~ ${rng[1]}px 만 마커로 인정`
+    : (ref > 0 ? '→ 필터 꺼짐' : '');
+  const warn = [];
+  if (hi >= 14) warn.push('상한이 14% 이상이면 외곽선과 붙은 접힌 선을 걸러내지 못합니다');
+  const sig = +rt.rv_size_sigma_pct || 0;
+  if (ref > 0 && sig > Math.min(lo, hi) / 2) warn.push(`측정 흔들림(±${sig}%)이 범위의 절반을 넘습니다 — 범위를 넓히는 것을 권장`);
+  $('sizeWarn').textContent = warn.join(' · ');
+  const rs = (rtv && rtv.restart) || {};
+  $('restartInfo').innerHTML = rs.label && rt.tracker === 'ritualvision'
+    ? `Ritualvision: <span class="restart ${rs.phase}">${rs.label}</span>` + (rs.phase === 'failed' && rs.reason ? ` <span class="bad">${rs.reason}</span>` : '')
+    : '';
+  $('rvSizeSummary').textContent = ref > 0
+    ? `크기 필터: ${rng ? `${rng[0]} ~ ${rng[1]}px (기준 ${ref}px −${lo}% / +${hi}%)` : '꺼짐'} — 2번 카드에서 측정·조절`
+    : '크기 필터: 기준 없음 — 2번 카드의 접촉 거리 측정으로 정합니다';
+  for (const k of ['rv_size_lo_pct', 'rv_size_hi_pct'])
+    if (document.activeElement !== $(k)) $(k).value = rt[k];
+  if (document.activeElement !== $('rv_size_on')) $('rv_size_on').checked = !!rt.rv_size_on;
 }
 async function physicalContact() {
   const r = await api('/api/tension/physical', { object_side_mm: +$('object_side_mm').value, table_long_mm: +$('table_long_mm').value });
@@ -664,7 +770,7 @@ async function loadCfg() {
   const r = await api('/api/config/load', { name });
   if (!r.ok) return toast('불러오기 실패');
   const st = await api('/api/state'); fillForm(st.runtime);
-  toast(`불러옴: ${name} (reacTIVision 재시작)`);
+  toast(`불러옴: ${name} (트래커 재시작)`);
 }
 async function resetCfg() {
   await api('/api/config/reset', {}); await api('/api/config/save', {});
@@ -681,7 +787,7 @@ async function setCameraBorrow(on) {
   if (testMode || on === camBorrowed) return;
   camBorrowed = on;
   const r = await api('/api/camera/borrow', { on });
-  if (on && r.ok) toast('카메라를 웹으로 가져오는 중 (reacTIVision 일시 중지)...');
+  if (on && r.ok) toast('카메라를 웹으로 가져오는 중 (트래커 일시 중지)...');
   if (!on) toast('카메라를 reacTIVision으로 돌려줌');
 }
 window.addEventListener('pagehide', () => {
@@ -742,6 +848,7 @@ async function poll() {
     const st = await api('/api/state');
     const res = st.results, rt = st.runtime;
     renderRtvStatus(st.rtv);
+    renderSize(rt, st.rtv);
     if (st.test_mode) renderVirtual(st.virtual, st.rtv, rt);
     const ob = $('oscBadge');
     if (rt.osc_enabled && res.osc_fps > 0) {

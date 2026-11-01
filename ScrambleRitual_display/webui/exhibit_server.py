@@ -1,15 +1,18 @@
 """
-Scramble Ritual — exhibition server (reacTIVision edition).
+Scramble Ritual — exhibition server.
 
-    USB camera -> reacTIVision.exe (child process; camera.xml/reacTIVision.xml
-                  are generated into its own folder, ~/scramble_ritual/reactivision/)
+    USB camera -> marker tracker child process, chosen by the `tracker` setting:
+                    reacTIVision.exe (amoeba markers, ~/scramble_ritual/reactivision/) or
+                    Ritualvision.exe (edge-dash markers, ~/scramble_ritual/Ritualvision/);
+                  its camera.xml / reacTIVision.xml (/ ritualvision.xml) are generated
+                  into the tracker's own folder (tracker/engines)
                -> TUIO /tuio/2Dobj on UDP 127.0.0.1:3333
                -> this pipeline: ROI normalize -> tension graph -> OSC
                -> SOUND /scramble/obj + TD per-frame OSC bundle
 
-reacTIVision is the only recognition method: no OpenCV detection, no
+The tracker is the only recognition method: no OpenCV detection in this server, no
 simulation, no video/image sources. The web UI exposes what the exhibition
-needs — reacTIVision settings, the table region, object size, tension knobs
+needs — tracker settings, the table region, object size, tension knobs
 (MST graph by default), OSC targets, profiles and a monitor.
 
 Run:  python -m webui.exhibit_server          (scripts/exhibition_start.bat)
@@ -26,6 +29,7 @@ import json
 import math
 import os
 import re
+import statistics
 import sys
 import threading
 import time
@@ -35,10 +39,18 @@ import cv2
 import numpy as np
 from flask import Flask, Response, jsonify, request, send_from_directory
 
-from tracker.reactivision import (
-    INSTALL_DIR, RTV_DEFAULTS, TRACKERS, ExhibitObject, ReactivisionProcess, TuioReceiver,
-    default_mode, find_exe, import_xml, list_modes, original_xml_paths, tracker_exe,
+from tracker.engines import (
+    TRACKER_DEFAULTS, TRACKERS, engine_name, engines_info, get_engine, tracker_exe,
 )
+from tracker.engines.base import default_mode
+from tracker.engines.reactivision import (
+    INSTALL_DIR, find_exe, import_xml, list_modes, original_xml_paths,
+)
+from tracker.engines.ritualvision import (
+    CONTACT_RC_RATIO, RC_PER_R, SHAPE_TOL, size_range,
+)
+from tracker.process import TrackerProcess
+from tracker.tuio import ExhibitObject, TuioReceiver
 from tracker.idfix import IdFixer, IdModel, default_trees_path, parse_trees, tree_steps
 from tracker.motion import MotionGate
 from tracker.virtual import LIMIT as VIRTUAL_LIMIT, VirtualSource, VirtualTable
@@ -77,7 +89,7 @@ DEFAULT_OSC_TARGETS = [
 ]
 
 EXHIBIT_DEFAULTS = {
-    **RTV_DEFAULTS,
+    **TRACKER_DEFAULTS,
     # OSC
     "osc_enabled": False,
     "osc_prefix": "/scramble",
@@ -301,7 +313,10 @@ class ExhibitPipeline(threading.Thread):
                 self._dump(CFG_PATH, saved)
             except Exception:
                 pass
-        self.rtv = ReactivisionProcess(exe=exe_override)
+        self.rtv = TrackerProcess(exe=exe_override)
+        # tracker (re)start shown in the UI: restarting -> playing (first TUIO frame of the
+        # new process) or failed (none within RESTART_TIMEOUT_S)
+        self._restart = {"phase": "", "t": 0.0, "rx": None, "base": 0, "reason": ""}
         self.virtual = VirtualTable(test_objects_path) if self.test_mode else None
         self._hex_r = 0.0
         self.tuio = None
@@ -385,9 +400,29 @@ class ExhibitPipeline(threading.Thread):
         with self.lock:
             return dict(self.rt)
 
+    #: Ritualvision keys that only describe the last size measurement (no restart)
+    RV_INFO_KEYS = ("rv_size_src", "rv_size_shape", "rv_size_sigma_pct")
+
+    def _needs_restart(self, keys):
+        """Tracker settings mark the child for restart: the shared rtv_* keys and the
+        tracker choice always, Ritualvision's own keys only while it is the tracker."""
+        rv = engine_name(self.rt) == "ritualvision"
+        return any(k == "tracker" or k.startswith("rtv_")
+                   or (rv and (k == "ritualvision_exe"
+                               or (k.startswith("rv_") and k not in self.RV_INFO_KEYS)))
+                   for k in keys)
+
+    def _mark_restart(self):
+        """Called with self.lock held whenever the child is marked for restart."""
+        self._rtv_dirty = True
+        self._tuio_dirty = True
+        if not self.test_mode and self.rt.get("rtv_autostart", True):
+            self._restart = {"phase": "restarting", "t": time.perf_counter(), "rx": None,
+                             "base": 0, "reason": ""}
+
     def update(self, updates):
-        """Apply runtime updates (only known keys). reacTIVision keys mark the
-        child for restart; the restart itself happens on the pipeline thread."""
+        """Apply runtime updates (only known keys). Tracker keys mark the child
+        for restart; the restart itself happens on the pipeline thread."""
         applied = {}
         with self.lock:
             for k, v in (updates or {}).items():
@@ -397,15 +432,14 @@ class ExhibitPipeline(threading.Thread):
                     v = osc_targets({"osc_targets": v})
                 self.rt[k] = v
                 applied[k] = v
-            if any(k.startswith("rtv_") for k in applied):
-                self._rtv_dirty = True
-                self._tuio_dirty = True
+            if self._needs_restart(applied):
+                self._mark_restart()
         return applied
 
     def reset_cfg(self):
         with self.lock:
             self.rt = json.loads(json.dumps(EXHIBIT_DEFAULTS))
-            self._rtv_dirty = self._tuio_dirty = True
+            self._mark_restart()
 
     def _write_cfg(self, path):
         with self.lock:
@@ -429,7 +463,7 @@ class ExhibitPipeline(threading.Thread):
             self.rt.update({k: v for k, v in data.items() if k in EXHIBIT_DEFAULTS})
             if "osc_targets" in data:
                 self.rt["osc_targets"] = osc_targets(self.rt)
-            self._rtv_dirty = self._tuio_dirty = True
+            self._mark_restart()
         if name:
             self.active_name = safe_config_name(name)
             self._write_cfg(CFG_PATH)
@@ -492,12 +526,69 @@ class ExhibitPipeline(threading.Thread):
             return {"ok": False, "error": "두 마커가 같은 위치로 읽힙니다"}
         rt = self._rt_view()
         contact = round(d_px / self._table_long_px(rt, W, H), 4)
+        # Ritualvision also reports each marker's size: the same two markers give the size
+        # reference, and their centre distance / size checks they really touch edge to edge
+        size = None
+        if self.test_mode or engine_name(rt) == "ritualvision":
+            size = self._contact_size(a, b)
+        if size is not None and abs(size["ratio"] / CONTACT_RC_RATIO - 1.0) > SHAPE_TOL:
+            return {"ok": False, "shape_ratio": round(size["ratio"], 3),
+                    "error": (f"두 마커가 변끼리 맞닿지 않은 것 같습니다 (중심거리/크기 비율 "
+                              f"{size['ratio']:.2f}, 기대 {CONTACT_RC_RATIO:.2f}). 다시 측정하세요.")}
+        restart = False
         with self.lock:
             self.rt["tension_contact"] = contact
             self.rt["object_side_px"] = 0.0          # the measured contact wins
             self.rt["tension_contact_src"] = "measured"
-        return {"ok": True, "tension_contact": contact, "distance_px": round(d_px, 1),
-                "ids": [a.code_id, b.code_id]}
+            if size is not None:
+                self.rt["rv_size_ref_px"] = round(size["ref"], 1)
+                self.rt["rv_size_src"] = "measured"
+                self.rt["rv_size_shape"] = round(size["ratio"], 3)
+                self.rt["rv_size_sigma_pct"] = round(size["sigma_pct"], 2)
+                if not self.test_mode and engine_name(self.rt) == "ritualvision":
+                    self._mark_restart()             # Ritualvision picks the range up on restart
+                    restart = True
+        out = {"ok": True, "tension_contact": contact, "distance_px": round(d_px, 1),
+               "ids": [a.code_id, b.code_id], "restart": restart}
+        if size is not None:
+            out.update(size_ref_px=round(size["ref"], 1), size_sigma_pct=round(size["sigma_pct"], 2),
+                       shape_ratio=round(size["ratio"], 3), size_samples=size["n"])
+        return out
+
+    SIZE_SAMPLE_S = 1.0        # contact measurement: collect marker sizes this long
+
+    def _contact_size(self, a, b):
+        """Size reference from two markers placed edge to edge:
+        {"ref": rc px, "sigma_pct", "ratio": centre distance / rc, "n"} or None when the
+        tracker sends no sizes (reacTIVision, or an older Ritualvision.exe)."""
+        if self.test_mode:                 # virtual hexagons: drawn with radius _hex_r
+            if self._hex_r <= 0:
+                return None
+            rc = RC_PER_R * self._hex_r
+            return {"ref": rc, "sigma_pct": 0.0, "n": 1,
+                    "ratio": math.hypot(a.cx - b.cx, a.cy - b.cy) / rc}
+        rx = self.tuio
+        if not isinstance(rx, TuioReceiver):
+            return None
+        sizes, dists = [], []
+        seen = rx.frame_no
+        t_end = time.perf_counter() + self.SIZE_SAMPLE_S
+        while time.perf_counter() < t_end:
+            if not rx.wait_frame(timeout=0.1, since=seen):
+                continue
+            seen = rx.frame_no
+            got = {o.track_id: o for o in rx.snapshot() if o.track_id in (a.track_id, b.track_id)}
+            oa, ob = got.get(a.track_id), got.get(b.track_id)
+            if oa is None or ob is None or oa.size_px <= 0 or ob.size_px <= 0 or not oa.frame_w:
+                continue
+            sizes += [oa.size_px, ob.size_px]
+            # distance in camera px, the unit of the sizes (the canvas may be scaled)
+            dists.append(math.hypot((oa.nx - ob.nx) * oa.frame_w, (oa.ny - ob.ny) * oa.frame_h))
+        if not sizes:
+            return None
+        ref = statistics.median(sizes)
+        return {"ref": ref, "sigma_pct": statistics.pstdev(sizes) / ref * 100.0,
+                "ratio": statistics.median(dists) / ref, "n": len(dists)}
 
     def contact_from_physical(self, side_mm, table_mm):
         """Manual fallback: object side and table long side in mm ->
@@ -520,13 +611,16 @@ class ExhibitPipeline(threading.Thread):
             self.rt["tension_contact_src"] = "physical"
         return {"ok": True, "tension_contact": contact}
 
-    # -- reacTIVision control (Flask threads only set flags) ---------------
+    # -- tracker control (Flask threads only set flags) --------------------
+
+    @staticmethod
+    def _is_tracker_key(k):
+        return k.startswith(("rtv_", "rv_")) or k in ("tracker", "ritualvision_exe")
 
     def rtv_apply(self, updates):
-        self.update({k: v for k, v in (updates or {}).items() if k.startswith("rtv_")})
+        self.update({k: v for k, v in (updates or {}).items() if self._is_tracker_key(k)})
         with self.lock:
-            self._rtv_dirty = True
-            self._tuio_dirty = True
+            self._mark_restart()
         return self.rtv_state()
 
     def rtv_start(self):
@@ -534,26 +628,52 @@ class ExhibitPipeline(threading.Thread):
             return self.rtv_state()
         with self.lock:
             self.rt["rtv_autostart"] = True
-            self._rtv_dirty = True
+            self._mark_restart()
         return self.rtv_state()
 
     def rtv_stop(self):
         with self.lock:
             self.rt["rtv_autostart"] = False
             self._rtv_dirty = False
+            self._restart = {"phase": "", "t": 0.0, "rx": None, "base": 0, "reason": ""}
         self.rtv.stop()
         return self.rtv_state()
 
     def rtv_import(self):
-        exe = find_exe(self.get_rt().get("rtv_exe", ""))
+        rt = self.get_rt()
+        eng = get_engine(rt)
+        exe = eng.find_exe(rt, self.rtv.exe_override)
         if not exe:
-            return {"ok": False, "error": "reacTIVision.exe 없음"}
+            return {"ok": False, "error": eng.missing_exe_message()}
         d = os.path.dirname(exe)
-        data = import_xml(*original_xml_paths(d))
+        data = eng.import_configs(d)
         if not data:
-            return {"ok": False, "error": f"{d} 에 camera.xml/reacTIVision.xml 없음"}
+            return {"ok": False, "error": f"{d} 에 {eng.label} 설정 파일 없음"}
         self.update(data)
         return {"ok": True, "imported": data, "dir": d}
+
+    RESTART_TIMEOUT_S = 20.0   # one-file Ritualvision.exe unpacks before the camera opens
+
+    def _restart_status(self):
+        """{"phase": "" | "restarting" | "playing" | "failed", "label", "reason"}"""
+        with self.lock:
+            r = self._restart
+            if r["phase"] == "restarting" and r["rx"] is not None:
+                rx = r["rx"]
+                if rx is self.tuio and rx.frame_no > r["base"]:
+                    r["phase"] = "playing"
+                elif time.perf_counter() - r["t"] > self.RESTART_TIMEOUT_S:
+                    st = self.rtv.status()
+                    last = next((ln for ln in reversed(st["log"]) if ln.strip()), "")
+                    r["phase"] = "failed"
+                    r["reason"] = st["error"] or (f"{self.RESTART_TIMEOUT_S:.0f}초 동안 TUIO 수신 없음"
+                                                  + (f" — {last}" if last else ""))
+            phase, reason = r["phase"], r["reason"]
+        if phase == "playing" and not self.rtv.is_running():
+            phase = ""
+        label = {"restarting": "다시 시작하는 중", "playing": "재생중",
+                 "failed": "재시작 실패"}.get(phase, "")
+        return {"phase": phase, "label": label, "reason": reason}
 
     def rtv_modes(self, refresh=False):
         rt = self.get_rt()
@@ -583,8 +703,11 @@ class ExhibitPipeline(threading.Thread):
     def rtv_state(self):
         st = self.rtv.status()
         t = self.tuio
+        rt = self.get_rt()
+        eng = get_engine(rt)
         with self.lock:
             objs = list(self.results.get("objects", []))
+        rng = size_range(rt)
         st.update({
             "tuio_port": t.port if t else None,
             "tuio_fps": round(t.fps, 1) if t else 0.0,
@@ -592,7 +715,12 @@ class ExhibitPipeline(threading.Thread):
             "tuio_age": (round(t.age(), 2) if t and t.age() != float("inf") else None),
             "last_fseq": t.last_fseq if t else -1,
             "objects": objs,
-            "exe_found": bool(find_exe(self.get_rt().get("rtv_exe", ""))),
+            "selected": eng.name,                  # may differ from "engine" until restarted
+            "selected_label": eng.label,
+            "engines": engines_info(),
+            "exe_found": bool(eng.find_exe(rt, self.rtv.exe_override)),
+            "restart": self._restart_status(),
+            "size_range": [round(rng[0], 1), round(rng[1], 1)] if rng else None,
             "test_mode": self.test_mode,
         })
         return st
@@ -735,9 +863,17 @@ class ExhibitPipeline(threading.Thread):
                 self._rtv_dirty = False
                 want = bool(rt.get("rtv_autostart", True))
             if want:
-                self.rtv.restart(rt) if self.rtv.is_running() else self.rtv.start(rt)
+                st = self.rtv.restart(rt) if self.rtv.is_running() else self.rtv.start(rt)
+                with self.lock:            # "playing" once the new process sends a frame
+                    rx = self.tuio
+                    self._restart = {"phase": "restarting", "t": time.perf_counter(), "rx": rx,
+                                     "base": rx.frame_no if rx is not None else 0, "reason": ""}
+                    if not st.get("running"):
+                        self._restart.update(phase="failed", reason=st.get("error") or "실행 실패")
             else:
                 self.rtv.stop()
+                with self.lock:
+                    self._restart = {"phase": "", "t": 0.0, "rx": None, "base": 0, "reason": ""}
 
     def _stop_exhibit(self):
         self._release_camera()

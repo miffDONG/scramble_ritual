@@ -84,4 +84,4 @@ build.bat
 
 ## 전시 서버 연동
 
-`ScrambleRitual_Reactivision\scripts\exhibition_start.bat --tracker ritualvision` (되돌리기: `--tracker reactivision`). 선택은 `webui/exhibit_config.json`의 `tracker`에 저장되어, 옵션 없이 실행하면 마지막 선택을 그대로 씁니다. 서버는 이 폴더의 Ritualvision.exe를 그 자리에서 실행하고(복사 안 함), camera.xml·reacTIVision.xml을 웹 UI 설정으로 써 줍니다. 종료할 때는 exe의 프로세스 트리 전체를 정리합니다.
+`ScrambleRitual_display\scripts\exhibition_start.bat --tracker ritualvision` (되돌리기: `--tracker reactivision`). 선택은 `webui/exhibit_config.json`의 `tracker`에 저장되어, 옵션 없이 실행하면 마지막 선택을 그대로 씁니다. 서버는 이 폴더의 Ritualvision.exe를 그 자리에서 실행하고(복사 안 함), camera.xml·reacTIVision.xml을 웹 UI 설정으로 써 줍니다. 종료할 때는 exe의 프로세스 트리 전체를 정리합니다.

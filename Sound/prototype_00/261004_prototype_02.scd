@@ -6,6 +6,7 @@ OSC Receive(in): /scramble/obj, id, 0, bits, "00000000", x, 0.65, y, 0.30, tilt,
 OSC Send(out): /audio, "0", amp(Float 0~1), tension(Float 0~1)
 =============================================================================*/
 
+OSCFunc.trace(true);
 
 (
 // < 1. 초기 변수 및 실행 토큰 설정 >
@@ -13,7 +14,7 @@ var sourcePath = thisProcess.nowExecutingPath;
 var server = s;
 var paths, runToken = UniqueID.next;
 
-if (~stopScramble.notNil) { ~stopScramble.value; }; // 이전에 돌아가던 시스템함수(~stopScramble)가 있다면, 먼저 멈추고 정리
+if (~stopScramble.notNil) { ~stopScramble.value; }; // 이전에 돌아가던 시스템함수(~stopScramble)가 있다면, 먼저 멈추고 정리/
 ~scrambleRunToken = runToken;
 
 // < 2. 환경 설정 파라미터 > - 네트워크, WAV, 사운드 파라미터(왜곡량)
@@ -21,7 +22,7 @@ if (~stopScramble.notNil) { ~stopScramble.value; }; // 이전에 돌아가던 �
 ~sampleNames = nil;
 
 ~receivePort = 57120;
-~targetIP = "192.168.0.7";
+~targetIP = "127.0.0.1";
 ~targetPort = 9000;
 ~outputKey = \idString;
 ~timeout = 0.3;

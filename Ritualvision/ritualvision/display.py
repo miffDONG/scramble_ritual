@@ -21,7 +21,7 @@ TILE_PER_RC = 1.0 / (0.76 * 2 / math.sqrt(3))     # tile vertex radius / fold ar
 
 HELP = ["t / Tab  line mask <-> camera   (1 camera, 2 mask)", "[ ]  offset -/+  (line threshold)",
         ", .  window -/+  (threshold size)", "r  minimum size: on (register) / off",
-        "c  camera driver settings", "s  save snapshot", "p  pause", "h  help", "q / Esc  quit"]
+        "c  camera driver settings", "F12  save snapshot", "p  pause", "h  help", "q / Esc  quit"]
 
 
 def _hexagon(cx, cy, radius, first_vertex_deg):

@@ -33,7 +33,6 @@ KEYS = {
     "mask_view": ("2",),
     "help": ("h", "H", "ㅗ"),
     "pause": ("p", "P", "ㅔ"),
-    "snap": ("s", "S", "ㄴ"),
     "driver": ("c", "C", "ㅊ"),
     "size": ("r", "R", "ㄱ"),
     "quit": ("q", "Q", "ㅂ"),
@@ -41,12 +40,17 @@ KEYS = {
     "off_down": ("[",), "off_up": ("]",), "win_down": (",",), "win_up": (".",),
 }
 KEYCODES = {code: name for name, chars in KEYS.items() for code in map(ord, chars)}
+# function keys: waitKeyEx on Windows reports the virtual-key code << 16. Snapshot is on F12,
+# a key reacTIVision does not use (its s is "source image"), and it works in any input mode.
+SPECIAL_KEYS = {0x7B0000: "snap"}       # F12
 
 
 def key_action(k):
     """waitKeyEx code -> action name (None when the key means nothing here)."""
     if k < 0:
         return None
+    if k in SPECIAL_KEYS:
+        return SPECIAL_KEYS[k]
     return KEYCODES.get(k) or KEYCODES.get(k & 0xFFFF) or KEYCODES.get(k & 0xFF)
 
 

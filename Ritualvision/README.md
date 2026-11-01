@@ -15,7 +15,7 @@ reacTIVision을 복제한 구조에서 **마커 인식 & 분류부만 교체한*
 | 키 | 동작 |
 |---|---|
 | `t` / `Tab` (`1` 카메라, `2` 마스크) | 카메라 영상 ↔ 선 마스크(인식기가 보는 흑백) 전환. Caps Lock·한글 입력 상태에서도 동작 |
-| `r` | 최소 크기 필터. off에서 누르면 **등록 모드**: 가장 작은 오브제를 올려두고 `r`을 한 번 더 누르면 그 크기의 80% 미만을 noise로 무시(on). on에서 누르면 off. 등록 중 `Esc`는 취소. 설정은 `ritualvision_state.json`에 저장되어 재시작·`-n` 모드에도 적용 |
+| `r` | 최소 크기 필터(단독 테스트용). off에서 누르면 **등록 모드**: 가장 작은 오브제를 올려두고 `r`을 한 번 더 누르면 그 크기의 80% 미만을 noise로 무시(on). on에서 누르면 off. 등록 중 `Esc`는 취소. 설정은 `ritualvision_state.json`에 저장되어 재시작·`-n` 모드에도 적용. **전시 서버가 크기 범위를 정해 두었으면(ritualvision.xml `size_on="true"`) 그 값이 우선**이고 `r`은 동작하지 않음 |
 | `[` `]` | offset −/+ : 선으로 판단하는 어두움 기준. 선이 끊기면 내리고, 잡음이 많으면 올림 |
 | `,` `.` | window −/+ : 국소 임계값 창 크기 (기본 15px) |
 | `c` | 카메라 드라이버 설정 창 (노출·게인·포커스를 손으로 조절) |
@@ -84,4 +84,6 @@ build.bat
 
 ## 전시 서버 연동
 
-`ScrambleRitual_display\scripts\exhibition_start.bat --tracker ritualvision` (되돌리기: `--tracker reactivision`). 선택은 `webui/exhibit_config.json`의 `tracker`에 저장되어, 옵션 없이 실행하면 마지막 선택을 그대로 씁니다. 서버는 이 폴더의 Ritualvision.exe를 그 자리에서 실행하고(복사 안 함), camera.xml·reacTIVision.xml을 웹 UI 설정으로 써 줍니다. 종료할 때는 exe의 프로세스 트리 전체를 정리합니다.
+`ScrambleRitual_display\scripts\exhibition_start.bat --tracker ritualvision` (되돌리기: `--tracker reactivision`), 또는 웹 UI "1 전시 카메라 · 트래커"의 전환 버튼 + **적용 (재시작)**. 선택은 `webui/exhibit_config.json`의 `tracker`에 저장되어, 옵션 없이 실행하면 마지막 선택을 그대로 씁니다. 서버는 이 폴더의 Ritualvision.exe를 그 자리에서 실행하고(복사 안 함), camera.xml·reacTIVision.xml·**ritualvision.xml**을 웹 UI 설정으로 써 줍니다(처음 쓸 때 원본은 `*.orig`로 보관). 종료할 때는 exe의 프로세스 트리 전체를 정리합니다.
+
+크기 정보: Ritualvision은 TUIO 번들에 마커마다 `/ritualvision/size s rc W H`(접힌 선 팔 길이 px)를 함께 보냅니다. 웹 UI에서 **접촉 거리 측정**을 하면 서버가 같은 두 마커의 크기로 기준값을 정하고(중심거리/크기 = 1.97 ± 6%로 맞닿음 확인), ritualvision.xml의 `size_ref size_lo size_hi size_on`에 써서 Ritualvision을 자동으로 다시 시작합니다. 범위(기본 ±10%) 밖의 접힌 선은 TUIO로 보내지 않습니다.

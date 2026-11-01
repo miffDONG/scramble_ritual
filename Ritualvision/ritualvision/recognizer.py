@@ -56,10 +56,12 @@ def load_ids(path):
 
 class Recognizer:
     def __init__(self, ids, block=0, offset=10.0, invert=False, equalize=False,
-                 min_arm=12.0, max_arm=400.0, angle_tol=6.0, min_rc=0.0):
+                 min_arm=12.0, max_arm=400.0, angle_tol=6.0, min_rc=0.0, max_rc=0.0):
         self.ids = ids
         self.angle_tol = angle_tol      # fold must be 120 deg +- this
-        self.min_rc = min_rc            # registered minimum size (px); 0 = off
+        self.min_rc = min_rc            # smallest accepted size (px); 0 = off
+        self.max_rc = max_rc            # largest accepted size (px); 0 = off. A fold merged
+        #                                 with the tile outline grows ~14%: dropped, not misread
         self.last_noise = 0             # folds dropped by the size filter in the last frame
         self.block = block
         self.offset = offset
@@ -123,8 +125,9 @@ class Recognizer:
         # a tile whose centre is outside the frame cannot be read whole; it is never a marker
         anchors = [a for a in self._dedupe(anchors)
                    if 0 <= a["centre"][0] < W and 0 <= a["centre"][1] < H]
-        if self.min_rc > 0:              # smaller than the registered smallest object: noise
-            kept = [a for a in anchors if a["rc"] >= self.min_rc]
+        if self.min_rc > 0 or self.max_rc > 0:      # outside the size range: noise
+            kept = [a for a in anchors if a["rc"] >= self.min_rc
+                    and (self.max_rc <= 0 or a["rc"] <= self.max_rc)]
             self.last_noise = len(anchors) - len(kept)
             anchors = kept
         else:

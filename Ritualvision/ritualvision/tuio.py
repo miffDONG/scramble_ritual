@@ -3,6 +3,9 @@
 One bundle per frame, same as reacTIVision: source, alive, set (per object), fseq.
   set s i x y a X Y A m r   ->  session, fiducial id, position 0..1, angle rad,
                                 velocity, rotation speed, motion and rotation acceleration
+Plus, in the same bundle and outside the TUIO namespace (other TUIO clients ignore it):
+  /ritualvision/size s rc W H   ->  marker size: fold arm length rc in pixels of the W x H
+                                    frame (the exhibit server's contact measurement uses it)
 """
 
 import socket
@@ -49,13 +52,19 @@ class TuioSender:
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.fseq = 0
 
-    def send(self, objects):
+    def send(self, objects, frame_size=None):
         msgs = [osc_message("/tuio/2Dobj", "source", self.source),
                 osc_message("/tuio/2Dobj", "alive", *[int(o.sid) for o in objects])]
         for o in objects:
             msgs.append(osc_message("/tuio/2Dobj", "set", int(o.sid), int(o.fid),
                                     float(o.x), float(o.y), float(o.a),
                                     float(o.X), float(o.Y), float(o.A), float(o.m), float(o.r)))
+        if frame_size:
+            W, H = frame_size
+            for o in objects:
+                size = float(getattr(o, "size", 0.0) or 0.0)
+                if size > 0:
+                    msgs.append(osc_message("/ritualvision/size", int(o.sid), size, int(W), int(H)))
         self.fseq += 1
         msgs.append(osc_message("/tuio/2Dobj", "fseq", self.fseq))
         data = osc_bundle(msgs)

@@ -52,6 +52,19 @@ class AppConfig:
     max_anchor_px: float = 400.0
     hold_frames: int = 3            # keep a lost marker alive this many frames
     ids_file: str = "ids.json"
+    # size range written by the exhibit server (contact measurement): folds whose arm length
+    # rc lies outside size_ref*(1-size_lo%) .. size_ref*(1+size_hi%) are dropped
+    size_on: bool = False
+    size_ref: float = 0.0
+    size_lo: float = 10.0
+    size_hi: float = 10.0
+
+    def size_range(self):
+        """(min_rc, max_rc) when the server size range is on, else None."""
+        if not self.size_on or self.size_ref <= 0:
+            return None
+        return (self.size_ref * (1 - self.size_lo / 100.0),
+                self.size_ref * (1 + self.size_hi / 100.0))
 
 
 def _int(v, d):
@@ -94,8 +107,9 @@ def load_camera(path):
 
 
 def load_app(path, extra=None):
-    """reacTIVision.xml (written by the exhibit server), then ritualvision.xml on top for
-    the Ritualvision-only <recognizer> settings, so the server never overwrites them."""
+    """reacTIVision.xml (TUIO port, preview), then ritualvision.xml on top for the
+    Ritualvision-only <recognizer> settings. The exhibit server writes both from its web UI;
+    run standalone, the last written values stay in effect."""
     cfg = AppConfig()
     for p in (path, extra):
         if p and os.path.exists(p):
@@ -122,6 +136,12 @@ def _apply_app(cfg, root):
         cfg.invert = _bool(rec.get("invert"), cfg.invert)
         cfg.hold_frames = _int(rec.get("hold"), cfg.hold_frames)
         cfg.ids_file = rec.get("ids", cfg.ids_file)
+        cfg.size_on = _bool(rec.get("size_on"), cfg.size_on)
+        for name, key in (("size_ref", "size_ref"), ("size_lo", "size_lo"), ("size_hi", "size_hi")):
+            try:
+                setattr(cfg, name, float(rec.get(key, getattr(cfg, name))))
+            except ValueError:
+                pass
 
 
 def resolve_files(conf_dir=None):

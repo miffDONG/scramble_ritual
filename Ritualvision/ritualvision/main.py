@@ -112,7 +112,11 @@ def main(argv=None):
     rec = Recognizer(ids, block=app.block, offset=app.offset, invert=app.invert, equalize=app.equalize,
                      min_arm=app.min_anchor_px, max_arm=app.max_anchor_px)
     gate = SizeGate(os.path.join(args.config_dir or base_dir(), "ritualvision_state.json"))
-    log(f"  size    {gate.status()}")
+    # the exhibit server's size range (ritualvision.xml) wins over the local r-key gate
+    srv_range = app.size_range()
+    srv_status = (f"size {app.size_ref:.1f}px -{app.size_lo:g}%/+{app.size_hi:g}% [server]"
+                  if srv_range else "")
+    log(f"  size    {srv_status + f' ({srv_range[0]:.1f}..{srv_range[1]:.1f}px)' if srv_range else gate.status()}")
     tracker = Tracker(hold=app.hold_frames)
     tuio = TuioSender(app.tuio_host, app.tuio_port)
     headless = args.headless or args.once or app.display == "none"
@@ -137,12 +141,14 @@ def main(argv=None):
             last_no = no
             frame = camera_options.crop(frame, cam_cfg)
             if not paused:
-                rec.min_rc = gate.min_rc
+                rec.min_rc, rec.max_rc = srv_range if srv_range else (gate.min_rc, 0.0)
                 markers = rec.process(frame)
-                gate.observe(markers)
+                if not srv_range:
+                    gate.observe(markers)
                 H, W = frame.shape[:2]
-                objs = tracker.update([(m.fid, m.x / W, m.y / H, math.radians(m.angle)) for m in markers])
-                tuio.send(objs)
+                objs = tracker.update([(m.fid, m.x / W, m.y / H, math.radians(m.angle), m.size)
+                                       for m in markers])
+                tuio.send(objs, (W, H))
             frames += 1
             now = time.perf_counter()
             if now - t_fps >= 1.0:
@@ -161,7 +167,8 @@ def main(argv=None):
                     msg = ""
                 view = lambda as_mask, hlp=False, m="": draw(
                     frame, rec.mask, markers, as_mask, fps, rec.offset, hlp, m, rec.block,
-                    gate.status(), rec.last_noise, gate.prompt(markers))
+                    srv_status or gate.status(), rec.last_noise,
+                    () if srv_range else gate.prompt(markers))
                 img = view(show_mask, show_help, msg)
                 cv2.imshow(win, img)
                 act = key_action(cv2.waitKeyEx(1))
@@ -171,7 +178,9 @@ def main(argv=None):
                 if act in ("quit", "esc") or cv2.getWindowProperty(win, cv2.WND_PROP_VISIBLE) < 1:
                     break
                 if act == "size":
-                    msg, msg_until = gate.press_r(), now + 3.0
+                    msg = ("size range is set by the exhibit server (web UI contact measurement)"
+                           if srv_range else gate.press_r())
+                    msg_until = now + 3.0
                 elif act in ("mask", "camera_view", "mask_view"):
                     show_mask = (not show_mask) if act == "mask" else (act == "mask_view")
                     msg, msg_until = ("view: line mask" if show_mask else "view: camera"), now + 1.5

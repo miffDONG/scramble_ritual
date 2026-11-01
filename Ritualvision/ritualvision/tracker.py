@@ -9,15 +9,17 @@ import time
 
 
 class TrackedObject:
-    __slots__ = ("sid", "fid", "x", "y", "a", "X", "Y", "A", "m", "r", "t", "missed", "speed")
+    __slots__ = ("sid", "fid", "x", "y", "a", "X", "Y", "A", "m", "r", "t", "missed", "speed",
+                 "size")
 
-    def __init__(self, sid, fid, x, y, a, t):
+    def __init__(self, sid, fid, x, y, a, t, size=0.0):
         self.sid, self.fid = sid, fid
         self.x, self.y, self.a = x, y, a
         self.X = self.Y = self.A = self.m = self.r = 0.0
         self.speed = 0.0
         self.t = t
         self.missed = 0
+        self.size = size            # fold arm length rc (px); kept while the marker is held
 
 
 class Tracker:
@@ -27,16 +29,19 @@ class Tracker:
         self.objects = {}           # fid -> TrackedObject
 
     def update(self, detections, now=None):
-        """detections: list of (fid, x_norm, y_norm, angle_rad). Returns live objects."""
+        """detections: list of (fid, x_norm, y_norm, angle_rad[, size_px]). Returns live
+        objects."""
         now = time.perf_counter() if now is None else now
         seen = set()
-        for fid, x, y, a in detections:
+        for det in detections:
+            fid, x, y, a = det[:4]
+            size = float(det[4]) if len(det) > 4 else 0.0
             if fid < 0 or fid in seen:
                 continue
             seen.add(fid)
             o = self.objects.get(fid)
             if o is None:
-                self.objects[fid] = TrackedObject(self.next_sid, fid, x, y, a, now)
+                self.objects[fid] = TrackedObject(self.next_sid, fid, x, y, a, now, size)
                 self.next_sid += 1
                 continue
             dt = max(now - o.t, 1e-3)
@@ -48,6 +53,8 @@ class Tracker:
             o.r = (A - o.A) / dt
             o.X, o.Y, o.A, o.speed = X, Y, A, speed
             o.x, o.y, o.a, o.t, o.missed = x, y, a, now, 0
+            if size > 0:
+                o.size = size
         for fid in list(self.objects):
             if fid not in seen:
                 o = self.objects[fid]

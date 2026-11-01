@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!-- Ritualvision-only settings. Read after reacTIVision.xml (which the exhibit server
+     rewrites), so these survive. block = threshold window px, offset = darkness margin,
+     hold = frames a lost marker stays alive, ids = id table. -->
+<ritualvision>
+    <recognizer block="15" offset="12" invert="false" hold="3" ids="ids.json" />
+</ritualvision>

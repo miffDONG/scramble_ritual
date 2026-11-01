@@ -104,6 +104,7 @@
   <span class="badge rtv-only" id="rtvBadge">reacTIVision -</span>
   <span class="badge" id="tuioBadge">TUIO -</span>
   <span class="badge" id="oscBadge" title="OSC 실제 송신 주기와 사이클당 메시지 수">OSC 끔</span>
+  <label class="badge" id="idfixTop" title="마커 ID 보정 ON/OFF (3+ 카드)" style="cursor:pointer"><input type="checkbox" id="idfixTopChk" onchange="postOpt('idfix_enabled', this.checked); $('idfix_enabled').checked = this.checked"> ID 보정</label>
   <button class="btn primary" id="inferBtn" onclick="toggleInfer()">OSC 일시정지</button>
   <span id="error"></span>
 </header>
@@ -131,13 +132,13 @@
         <span class="badge" id="chipSize">-</span>
         <span class="badge info" id="chipTension" title="긴장도 d_near 기준(오브제 크기 측정값 또는 고정값)">긴장 기준 -</span>
       </div>
-      <p class="hint rtv-only">미리보기는 reacTIVision이 보내는 TUIO 값으로 그린 합성 화면입니다. 실제 카메라 영상은 reacTIVision 창에서 확인하세요.</p>
+      <p class="hint rtv-only">미리보기는 reacTIVision이 보내는 TUIO 값으로 그린 합성 화면입니다. <b>테이블 영역 지정</b> 중에는 카메라를 잠시 웹으로 가져와 실제 영상을 보여 주고(reacTIVision·OSC 일시 중지), 지정이 끝나거나 취소하면 reacTIVision으로 돌려줍니다.</p>
       <p class="hint test-only">테스트 모드: 가상 오브제를 <b>드래그로 이동</b>, <b>클릭하면</b> ID·기울기 편집/삭제. 6각형은 긴장도 1이 되는 거리(접촉 거리)에서 변끼리 맞닿는 크기로 그려집니다.</p>
     </div>
     <div class="card">
       <h2>오브제 (피듀셜)</h2>
       <table id="objTbl"><thead><tr>
-        <th>ID</th><th>bits</th><th>세션</th><th>x</th><th>y</th><th>tilt</th><th>tension</th>
+        <th>ID</th><th>bits</th><th>세션</th><th title="OSC로 보내는 값: 테이블 영역 기준, 왼쪽 0 → 오른쪽 1">x</th><th title="OSC로 보내는 값: 테이블 영역 기준, 아래 0 → 위 1">y</th><th>tilt</th><th>tension</th><th title="최근 0.2초 이동 속도 (테이블 긴 변 / 초)">속도</th>
       </tr></thead><tbody></tbody></table>
     </div>
     <div class="card" id="oscCard">
@@ -283,6 +284,50 @@
     </div>
 
     <div class="card">
+      <h2><span class="step">3+</span>마커 ID 보정 <span id="idfixBadge" class="badge info">끔 · 원본 그대로</span></h2>
+      <div class="row">
+        <label title="켜면 위치로 오브제를 추적해 프레임마다 읽힌 ID를 통계적으로 누적하고, 0~24 중 겹치지 않는 하나의 ID로 고정해 보냅니다. 이상하면 끄면 reacTIVision 값을 그대로 보냅니다"><input type="checkbox" id="idfix_enabled" onchange="postOpt('idfix_enabled', this.checked); $('idfixTopChk').checked = this.checked"> 보정 켜기</label>
+      </div>
+      <p class="hint"><b>끔</b>: reacTIVision이 보낸 ID를 <b>변환 없이 그대로</b> 송신합니다 (25 이상 값, 같은 ID 중복 포함). <b>켬</b>: 위치로 추적해 통계적으로 보정한 0~24의 겹치지 않는 ID를 송신합니다. 위치·tilt·긴장도 계산은 두 경우 모두 같습니다.</p>
+      <div class="grid">
+        <label title="같은 오브제로 볼 위치 반경 (접촉 거리의 배수)">추적 반경 ×접촉</label>
+        <input type="number" id="idfix_gate" step="0.05" min="0.1" max="2" onchange="postOpt('idfix_gate', +this.value)">
+        <label title="출력 ID가 바뀌려면 더 유력한 ID가 연속으로 앞서야 하는 프레임 수 (고정 상태는 ×4)">전환 프레임</label>
+        <input type="number" id="idfix_switch_frames" step="1" min="1" max="600" onchange="postOpt('idfix_switch_frames', +this.value)">
+        <label title="새 오브제가 확실한 ID를 얻을 때까지 송신을 미루는 최대 시간(초)">첫 송신 지연 s</label>
+        <input type="number" id="idfix_first_delay_s" step="0.05" min="0" max="2" onchange="postOpt('idfix_first_delay_s', +this.value)">
+        <label title="이 시간 동안 안 보이면 오브제 추적 종료(초). 최대 0.5. 송신은 reacTIVision이 보내는 동안만 하므로 이 값이 사라짐을 늦추지는 않음">추적 유지 s (≤0.5)</label>
+        <input type="number" id="idfix_lost_s" step="0.05" min="0.05" max="0.5" onchange="postOpt('idfix_lost_s', Math.min(0.5, +this.value))">
+        <label title="ID가 사라진 자리에 새 오브제가 나타나면 이 시간(초) 안에는 그 ID로 추정">ID 기억 s</label>
+        <input type="number" id="idfix_memory_s" step="1" min="0" max="120" onchange="postOpt('idfix_memory_s', +this.value)">
+        <label title="고정(locked)된 오브제의 오인식 통계를 configs/exhibit/id_confusion.json에 누적해 보정에 반영. 정답 지정한 오브제는 이 설정과 무관하게 항상 학습">오인식 자동 학습</label>
+        <input type="checkbox" id="idfix_learn" onchange="postOpt('idfix_learn', this.checked)">
+      </div>
+      <div class="row">
+        <button class="btn small" onclick="idfixReset(false)" title="추적 중인 오브제의 ID를 모두 새로 판정">추적 초기화</button>
+        <button class="btn small" onclick="idfixReset(true)" title="학습된 오인식 통계 삭제">학습 초기화</button>
+      </div>
+      <div id="idfixInfo" class="hint mono" style="white-space:pre-wrap"></div>
+      <p class="hint">캘리브레이션: 오브제의 실제 ID를 아래 표의 <b>정답</b>에 입력하면 즉시 그 ID로 고정되고, 그동안 읽힌 오인식 값(예: 46)이 학습되어 다음부터는 지정 없이도 같은 ID로 변환됩니다. 오브제를 테이블에서 치우면 지정은 풀리고 학습만 남습니다.</p>
+      <table id="idfixTbl"><thead><tr><th>트랙</th><th>출력 ID</th><th>읽힌 값</th><th>상태</th><th>확률</th><th>위치</th><th>정답</th></tr></thead><tbody></tbody></table>
+    </div>
+
+    <div class="card">
+      <h2><span class="step">3++</span>들어 올림 컷 <span id="liftBadge" class="badge info">끔</span></h2>
+      <div class="row">
+        <label title="카메라가 테이블 아래에 있어 들어 올린 마커도 한동안 인식됩니다. 켜면 빠르게 움직이는 오브제를 들고 옮기는 중으로 보고 송신에서 뺍니다"><input type="checkbox" id="lift_cut_enabled" onchange="postOpt('lift_cut_enabled', this.checked)"> 컷 켜기</label>
+      </div>
+      <div class="grid">
+        <label title="이 속도(테이블 긴 변 / 초) 이상이면 들고 이동 중으로 판단. 오브제 표의 '속도' 열을 보고 조정">컷 속도</label>
+        <input type="number" id="lift_cut_speed" step="0.05" min="0.05" max="3" onchange="postOpt('lift_cut_speed', +this.value)">
+        <label title="이 시간(초) 이상 계속 빠르면 컷. 최대 0.5">유지 시간 s (≤0.5)</label>
+        <input type="number" id="lift_cut_hold_s" step="0.05" min="0" max="0.5" onchange="postOpt('lift_cut_hold_s', Math.min(0.5, +this.value))">
+      </div>
+      <p class="hint"><b>끔</b>: 속도와 관계없이 reacTIVision이 보내는 오브제를 모두 송신합니다. <b>켬</b>: 컷 속도 이상으로 유지 시간 넘게 움직이면 송신에서 빼고, 다시 느려진 뒤 0.3초가 지나면 되살립니다. 테이블 위에서 빠르게 밀어도 컷되므로 오브제 표의 속도 열을 보고 기준을 정하세요.</p>
+      <div id="liftInfo" class="hint mono"></div>
+    </div>
+
+    <div class="card">
       <h2><span class="step">4</span>OSC 송신 (다중 대상)</h2>
       <div class="row">
         <label><input type="checkbox" id="osc_enabled" onchange="postOpt('osc_enabled', this.checked)"> 송신 켜기</label>
@@ -336,6 +381,18 @@ function postOpt(key, value) {
   }, 150);
 }
 const $ = id => document.getElementById(id);
+async function idfixPin(track, value) {
+  const id = value === '' || value === null ? -1 : +value;
+  const r = await api('/api/idfix/pin', {track, id});
+  if (!r.ok) return toast(r.error || '지정 실패');
+  document.activeElement && document.activeElement.blur();
+  toast(id >= 0 ? `트랙 ${track} → ID ${id} 지정 (학습 중)` : `트랙 ${track} 지정 해제`);
+}
+async function idfixReset(learned) {
+  if (learned && !confirm('학습된 오인식 통계를 삭제할까요?')) return;
+  await api('/api/idfix/reset', {learned});
+  toast(learned ? '학습 통계 초기화' : '추적 초기화');
+}
 async function toggleInfer() {
   inferOn = !inferOn;
   await api('/api/pipeline', { infer: inferOn });
@@ -569,6 +626,16 @@ function fillForm(rt) {
   $('tension_fold').value = 'max';
   $('tension_margin').value = rt.tension_margin || 0;
   $('show_graph').checked = !!rt.show_graph;
+  $('idfix_enabled').checked = !!rt.idfix_enabled;
+  $('idfix_gate').value = rt.idfix_gate;
+  $('idfix_switch_frames').value = rt.idfix_switch_frames;
+  $('idfix_first_delay_s').value = rt.idfix_first_delay_s;
+  $('idfix_lost_s').value = rt.idfix_lost_s;
+  $('idfix_learn').checked = !!rt.idfix_learn;
+  $('idfix_memory_s').value = rt.idfix_memory_s;
+  $('lift_cut_enabled').checked = !!rt.lift_cut_enabled;
+  $('lift_cut_speed').value = rt.lift_cut_speed;
+  $('lift_cut_hold_s').value = rt.lift_cut_hold_s;
   $('osc_enabled').checked = !!rt.osc_enabled;
   $('osc_prefix').value = rt.osc_prefix;
   renderTargets(rt.osc_targets);
@@ -608,14 +675,28 @@ async function resetCfg() {
 /* ---------- ROI / side drag on the preview ---------- */
 let dragPurpose = null, roiStart = null;
 const roiLayer = $('roiLayer'), roiRectEl = $('roiRect');
+let camBorrowed = false;
+async function setCameraBorrow(on) {
+  // ROI setup only: reacTIVision is paused while the web preview holds the camera
+  if (testMode || on === camBorrowed) return;
+  camBorrowed = on;
+  const r = await api('/api/camera/borrow', { on });
+  if (on && r.ok) toast('카메라를 웹으로 가져오는 중 (reacTIVision 일시 중지)...');
+  if (!on) toast('카메라를 reacTIVision으로 돌려줌');
+}
+window.addEventListener('pagehide', () => {
+  if (camBorrowed) navigator.sendBeacon('/api/camera/borrow', JSON.stringify({ on: false }));
+});
 function setDragMode(purpose) {
   dragPurpose = (dragPurpose === purpose) ? null : purpose;
+  setCameraBorrow(dragPurpose === 'roi');
   roiLayer.classList.toggle('active', !!dragPurpose);
   $('roiBtn').classList.toggle('primary', dragPurpose === 'roi');
   $('roiBtn').textContent = dragPurpose === 'roi' ? '지정 취소' : '테이블 영역 지정';
   $('calBtn').classList.toggle('primary', dragPurpose === 'calibrate');
   $('calBtn').textContent = dragPurpose === 'calibrate' ? '측정 취소' : '한 변 측정';
-  if (dragPurpose === 'roi') toast('미리보기 위에서 드래그해 테이블 영역을 지정하세요');
+  if (dragPurpose === 'roi') toast(testMode ? '미리보기 위에서 드래그해 테이블 영역을 지정하세요'
+                                          : '실제 카메라 영상 위에서 드래그해 테이블 영역을 지정하세요');
   if (dragPurpose === 'calibrate') toast('오브제 한 변의 시작점→끝점을 드래그하세요');
 }
 async function clearRoi() { await api('/api/roi', { roi: null }); await api('/api/config/save', {}); toast('영역 지움'); }
@@ -676,11 +757,42 @@ async function poll() {
     const srcName = {measured: '접촉 측정', physical: '실측 치수', manual: '직접 입력'}[rt.tension_contact_src] || '';
     $('contactBadge').textContent = rt.object_side_px > 0 ? '한 변 px 사용 중' : `접촉 ${rt.tension_contact} (${srcName})`;
     $('contactBadge').className = 'badge ' + (rt.tension_contact_src === 'measured' || rt.tension_contact_src === 'physical' ? 'ok' : 'info');
-    $('error').textContent = res.error || '';
+    const cam = st.camera || {};
+    if (camBorrowed && !cam.borrowed) {         // server gave the camera back (open failed / timeout)
+      camBorrowed = false;
+      if (dragPurpose === 'roi') setDragMode('roi');
+      if (cam.error) toast(cam.error);
+    }
+    $('error').textContent = cam.error || res.error || '';
     const tb = $('objTbl').querySelector('tbody');
     tb.innerHTML = res.objects.map(o =>
-      `<tr><td class="mono">#${o.id}</td><td class="mono">${o.bits || ''}</td><td>${o.track}</td><td>${o.x}</td><td>${o.y}</td><td>${o.angle}°</td><td>${o.tension}</td></tr>`
-    ).join('') || '<tr><td colspan="7" class="dim">인식된 피듀셜 없음</td></tr>';
+      `<tr><td class="mono">#${o.id}${o.raw >= 0 && o.raw !== o.id ? ` <span class="dim">←${o.raw}</span>` : ''}</td><td class="mono">${o.bits || ''}</td><td>${o.track}</td><td>${o.x}</td><td>${o.y}</td><td>${o.angle}°</td><td>${o.tension}</td><td>${o.speed ?? ''}</td></tr>`
+    ).join('') || '<tr><td colspan="8" class="dim">인식된 피듀셜 없음</td></tr>';
+    const fx = res.idfix;
+    $('idfixBadge').textContent = fx ? '켜짐 · 보정 ID 송신' : '끔 · 원본 그대로';
+    $('idfixBadge').className = 'badge ' + (fx ? 'ok' : 'info');
+    $('idfixTop').className = 'badge ' + (fx ? 'ok' : 'info');
+    if (document.activeElement !== $('idfixTopChk')) $('idfixTopChk').checked = !!fx;
+    $('idfixTop').lastChild.textContent = fx ? ` ID 보정 ON · 변환 ${fx.tracks.filter(t => t.raw !== t.id).length}` : ' ID 보정 OFF · 원본 그대로';
+    $('idfixInfo').textContent = fx
+      ? `보정 ${fx.corrected}회 · ID 전환 ${fx.switches}회 · 미확인 오인식 미송신 ${fx.withheld}회 · 추적 ${fx.tracks.length}개\n`
+        + fx.tracks.map(t => `#${t.id}${t.raw !== t.id ? '←' + t.raw : ''} ${t.state} ${t.p}${t.emitted ? '' : ' (대기)'}`).join('  ')
+        + (fx.events.length ? '\n최근 전환: ' + fx.events.slice(-5).map(e => `${e.from}→${e.to}(raw ${e.raw})`).join(', ') : '')
+        + (fx.learned.length ? '\n학습된 오인식: ' + fx.learned.map(c => `${c.true}→${c.raw}×${c.n}`).join(', ') : '')
+      : '';
+    const liftOn = !!(st.runtime && st.runtime.lift_cut_enabled);
+    $('liftBadge').textContent = liftOn ? '켜짐' : '끔';
+    $('liftBadge').className = 'badge ' + (liftOn ? 'ok' : 'info');
+    $('liftInfo').textContent = liftOn ? `컷된 프레임 누적 ${res.lift_cut || 0}` : '';
+    const it = $('idfixTbl').querySelector('tbody');
+    const focused = it.contains(document.activeElement);    // don't wipe an input being typed in
+    if (!focused) it.innerHTML = fx ? fx.tracks.map(t =>
+      `<tr${t.raw !== t.id ? ' style="color:var(--warn,#fb3)"' : ''}><td>${t.track}</td><td class="mono">#${t.id}</td><td class="mono">${t.raw}</td><td>${t.state}${t.emitted ? '' : ' (대기)'}</td><td>${t.pin >= 0 ? "지정" : t.p}</td><td class="dim">${t.x}, ${t.y}</td>`
+      + `<td><input type="number" min="0" max="24" style="width:52px" value="${t.pin >= 0 ? t.pin : ''}" placeholder="-" onkeydown="if(event.key==='Enter')idfixPin(${t.track}, this.value)">`
+      + ` <button class="btn small" onclick="idfixPin(${t.track}, this.previousElementSibling.value)">지정</button>`
+      + (t.pin >= 0 ? ` <button class="btn small" onclick="idfixPin(${t.track}, -1)">해제</button>` : '') + `</td></tr>`
+    ).join('') || '<tr><td colspan="7" class="dim">추적 중인 오브제 없음</td></tr>'
+      : '<tr><td colspan="7" class="dim">보정 꺼짐</td></tr>';
     const ot = $('oscTbl').querySelector('tbody');
     const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     ot.innerHTML = (res.osc || []).slice(0, 40).map(r =>

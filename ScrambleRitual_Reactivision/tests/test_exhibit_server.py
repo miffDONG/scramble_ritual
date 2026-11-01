@@ -33,6 +33,8 @@ def bare_pipeline(rt):
     p.tension_basis = ""
     p.osc_fps = 0.0
     p._osc_last_t = None
+    p._frame_lock = threading.Lock()
+    p._last_frame_t = 0.0
     return p
 
 
@@ -124,6 +126,17 @@ class TestSendOsc(unittest.TestCase):
         self.assertAlmostEqual(args[x_i], 0.5)
         self.assertAlmostEqual(args[y_i], 0.5)
 
+    def test_y_is_bottom_up(self):
+        rt = {**self.rt, "roi": [0.5, 0.5, 0.5, 0.5]}
+        y_i = X.OSC_OBJ_FIELDS.index("y")
+        for cy, want in ((400, 1.0), (500, 0.75), (700, 0.25), (799, 0.0025)):
+            FakeClient.sent = {}
+            p = bare_pipeline(rt)                 # ROI top edge = 1, toward the bottom edge -> 0
+            with mock.patch("pythonosc.udp_client.SimpleUDPClient", FakeClient):
+                p._send_osc(rt, [obj(1, 2, 960, cy)], (1280, 800), (640, 400, 1280, 800))
+            _, args = FakeClient.sent[("127.0.0.1", 57120)][0]
+            self.assertAlmostEqual(args[y_i], want, msg=f"cy={cy}")
+
     def test_disabled_or_paused_sends_nothing_but_builds_graph(self):
         p = bare_pipeline(self.rt)
         with mock.patch("pythonosc.udp_client.SimpleUDPClient", FakeClient):
@@ -136,6 +149,64 @@ class TestSendOsc(unittest.TestCase):
         rt = {**self.rt, "osc_enabled": False}
         with mock.patch("pythonosc.udp_client.SimpleUDPClient", FakeClient):
             self.assertEqual(p._send_osc(rt, [obj(1, 2, 10, 10)], (1280, 800), None), [])
+
+    def td_bundle(self, objs):
+        from pythonosc.osc_bundle import OscBundle
+        rt = {**self.rt, "osc_targets": [
+            {"name": "TD", "host": "127.0.0.1", "port": 7000, "format": "td", "enabled": True}]}
+        p = bare_pipeline(rt)
+        with mock.patch("pythonosc.udp_client.SimpleUDPClient", FakeClient):
+            p._send_osc(rt, objs, (1280, 800), None)
+        sent = FakeClient.sent[("127.0.0.1", 7000)]
+        self.assertEqual(len(sent), 1)                  # one bundle per frame
+        bundle = OscBundle(sent[0][1].dgram)
+        return p, [(m.address, m.params) for m in bundle]
+
+    def test_td_bundle_slots_from_zero_single_heartbeat(self):
+        p, msgs = self.td_bundle([obj(1, 4, 100, 100), obj(2, 9, 700, 500)])
+        addrs = [a for a, _ in msgs]
+        self.assertEqual(msgs[0], ("/scramble/heartbeat", [p._ritual.heartbeat]))
+        self.assertEqual(addrs.count("/scramble/heartbeat"), 1)
+        self.assertFalse(any(a.startswith("/scramble/heartbeat") and a != "/scramble/heartbeat"
+                             for a in addrs))
+        self.assertEqual(msgs[1], ("/scramble/count", [2]))
+        self.assertEqual(addrs.count("/scramble/count"), 1)
+        self.assertEqual(addrs[2:11], [f"/scramble/{f}" for f in
+                                       ("id0", "bits0", "x0", "y0", "tilt0", "tension0",
+                                        "pairID0", "pairX0", "pairY0")])
+        self.assertIn("/scramble/id1", addrs)
+        self.assertNotIn("/scramble/id2", addrs)
+        self.assertEqual(len(msgs), 2 + 2 * 9)
+
+    def test_td_pair_position(self):
+        _, msgs = self.td_bundle([obj(1, 4, 128, 80), obj(2, 9, 192, 80),
+                                  obj(3, 7, 1000, 700)])
+        m = dict((a.rsplit("/", 1)[1], v[0]) for a, v in msgs)
+        slot = {m[f"id{i}"]: i for i in range(3)}
+        for i in range(3):
+            pair = m[f"pairID{i}"]
+            if pair == -1:
+                self.assertEqual((m[f"pairX{i}"], m[f"pairY{i}"]), (-1.0, -1.0))
+            else:
+                j = slot[pair]
+                self.assertAlmostEqual(m[f"pairX{i}"], m[f"x{j}"], places=4)
+                self.assertAlmostEqual(m[f"pairY{i}"], m[f"y{j}"], places=4)
+        self.assertEqual(m[f"pairID{slot[4]}"], 9)      # the close pair points at each other
+        self.assertAlmostEqual(m[f"pairX{slot[4]}"], 0.15, places=4)
+
+    def test_pair_position_td_only(self):
+        p = bare_pipeline(self.rt)                     # list + json targets
+        with mock.patch("pythonosc.udp_client.SimpleUDPClient", FakeClient):
+            p._send_osc(self.rt, [obj(1, 4, 100, 100), obj(2, 9, 120, 100)], (1280, 800), None)
+        _, args = FakeClient.sent[("127.0.0.1", 7000)][0]
+        self.assertEqual(set(json.loads(args[0])), set(X.OSC_OBJ_FIELDS))
+        _, args = FakeClient.sent[("127.0.0.1", 57120)][0]
+        self.assertEqual(len(args), len(X.OSC_OBJ_FIELDS))
+
+    def test_td_heartbeat_without_objects(self):
+        p, msgs = self.td_bundle([])
+        self.assertEqual(msgs, [("/scramble/heartbeat", [p._ritual.heartbeat]),
+                                ("/scramble/count", [0])])
 
     def test_no_targets(self):
         rt = {**self.rt, "osc_targets": []}
@@ -249,7 +320,7 @@ class TestFrameCallback(unittest.TestCase):
         self.assertEqual(p._size, (1280, 800))
         self.assertEqual((objs[0].cx, objs[0].cy), (320.0, 400.0))   # canvas px filled in
         self.assertEqual(len(FakeClient.sent[("127.0.0.1", 57120)]), 2)
-        self.assertEqual(len(p._last_osc_log), 18)   # 2 SOUND messages + 16 TD bundle fields
+        self.assertEqual(len(p._last_osc_log), 22)   # 2 SOUND messages + TD heartbeat, count + 2x9 fields
         self.assertEqual(p._last_objs, objs)
         # paused: nothing sent, graph still computed
         FakeClient.sent = {}
@@ -259,6 +330,65 @@ class TestFrameCallback(unittest.TestCase):
         self.assertEqual(FakeClient.sent, {})
         self.assertEqual(p._last_osc_log, [])
         self.assertIsNotNone(p._graph)
+
+
+class TestSendClock(unittest.TestCase):
+    """reacTIVision goes quiet (~1 bundle/s) with an empty table: the clock
+    must keep heartbeat/count at the camera fps."""
+
+    def make(self):
+        FakeClient.sent = {}
+        rt = {**X.EXHIBIT_DEFAULTS, "osc_enabled": True, "roi": None, "osc_targets": [
+            {"name": "TD", "host": "127.0.0.1", "port": 7000, "format": "td", "enabled": True}]}
+        p = bare_pipeline(rt)
+        p.rtv = mock.Mock(format=(1280, 800, 120))
+        p._size = (0, 0)
+        p.infer_on = True
+        p.tuio = X.TuioReceiver(port=0)          # never started; state driven by hand
+        return p
+
+    def counts(self):
+        from pythonosc.osc_bundle import OscBundle
+        out = []
+        for _, b in FakeClient.sent[("127.0.0.1", 7000)]:
+            m = {x.address: x.params[0] for x in OscBundle(b.dgram)}
+            out.append(m["/scramble/count"])
+        return out
+
+    def test_count_drops_to_zero_in_five_clock_ticks(self):
+        p = self.make()
+        period = p._clock_period(p.rt)
+        self.assertAlmostEqual(period, 1 / 120)
+        t = p.tuio
+        with mock.patch("pythonosc.udp_client.SimpleUDPClient", FakeClient):
+            t._on_obj("/tuio/2Dobj", "alive", 7)
+            t._on_obj("/tuio/2Dobj", "set", 7, 4, .5, .5, 0., 0., 0., 0., 0., 0.)
+            t._on_obj("/tuio/2Dobj", "fseq", 1)
+            p._on_tuio_frame(t.snapshot(), 1)        # what on_frame does
+            t._on_obj("/tuio/2Dobj", "alive")        # marker lifted, then reacTIVision idles
+            t._on_obj("/tuio/2Dobj", "fseq", 2)
+            p._on_tuio_frame(t.snapshot(), 2)
+            sent = 0
+            for _ in range(6):                       # no more TUIO: only the clock
+                p._last_frame_t -= period
+                sent += p._clock_tick(period)
+        self.assertEqual(sent, 6)
+        self.assertEqual(self.counts(), [1, 1, 1, 1, 1, 0, 0, 0])   # 5 missing frames -> 0
+
+    def test_clock_does_not_double_send(self):
+        p = self.make()
+        p.tuio.last_rx = X.time.perf_counter()
+        with mock.patch("pythonosc.udp_client.SimpleUDPClient", FakeClient):
+            p._on_tuio_frame([], 1)
+            self.assertFalse(p._clock_tick(p._clock_period(p.rt)))   # real frame just sent
+        self.assertEqual(len(FakeClient.sent[("127.0.0.1", 7000)]), 1)
+
+    def test_clock_stops_when_reactivision_gone(self):
+        p = self.make()
+        p.tuio.last_rx = X.time.perf_counter() - p.CLOCK_ALIVE_S - 1
+        self.assertFalse(p._clock_tick(p._clock_period(p.rt)))
+        p.tuio = None
+        self.assertFalse(p._clock_tick(1 / 120))
 
 
 class TestContactDistance(unittest.TestCase):
@@ -316,6 +446,74 @@ class TestOverlay(unittest.TestCase):
                                      {"running": True, "pid": 1, "format": "640x400@120",
                                       "error": "boom"}, 118.0, (10, 10, 600, 380), rt, False)
         self.assertEqual(vis.shape, (400, 640, 3))
+
+    def test_camera_background(self):
+        rt = dict(X.EXHIBIT_DEFAULTS)
+        cam = X.np.full((800, 1280, 3), 200, X.np.uint8)
+        vis = X.draw_exhibit_overlay(640, 400, [], None, {}, 0.0, None, rt, camera=cam)
+        self.assertEqual(vis.shape, (400, 640, 3))
+        self.assertGreater(int(vis[200, 320, 0]), 150)
+
+
+class FakeCap:
+    def __init__(self, idx, api=None):
+        self.idx, self.released = idx, False
+
+    def isOpened(self):
+        return True
+
+    def set(self, *a):
+        return True
+
+    def read(self):
+        return True, X.np.zeros((800, 1280, 3), X.np.uint8)
+
+    def release(self):
+        self.released = True
+
+
+class TestCameraBorrow(unittest.TestCase):
+    def make(self):
+        p = bare_pipeline(dict(X.EXHIBIT_DEFAULTS))
+        p.test_mode = False
+        p.rtv = mock.Mock()
+        p._rtv_dirty = False
+        p._cam_want, p._cam, p._cam_frame, p._cam_error, p._cam_seen_t = False, None, None, None, 0.0
+        return p
+
+    @mock.patch.object(X.time, "sleep", lambda s: None)
+    def test_borrow_and_return(self):
+        p = self.make()
+        with mock.patch.object(X.cv2, "VideoCapture", FakeCap):
+            p.camera_borrow(True)
+            p._ensure_camera(p.rt)
+        p.rtv.stop.assert_called_once()
+        self.assertIsNotNone(p._cam)
+        self.assertEqual(p.camera_state()["size"], [1280, 800])
+        cap = p._cam
+        p.camera_borrow(False)
+        p._ensure_camera(p.rt)
+        self.assertTrue(cap.released)
+        self.assertIsNone(p._cam)
+        self.assertTrue(p._rtv_dirty)            # reacTIVision restarts afterwards
+
+    @mock.patch.object(X.time, "sleep", lambda s: None)
+    def test_idle_ui_returns_camera(self):
+        p = self.make()
+        with mock.patch.object(X.cv2, "VideoCapture", FakeCap):
+            p.camera_borrow(True)
+            p._ensure_camera(p.rt)
+            p._cam_seen_t -= p.CAM_IDLE_S + 1
+            p._ensure_camera(p.rt)
+        self.assertIsNone(p._cam)
+        self.assertFalse(p.camera_state()["borrowed"])
+
+    def test_crop_like_rtv(self):
+        f = X.np.zeros((800, 1280, 3), X.np.uint8)
+        rt = {"rtv_frame_width": 640, "rtv_frame_height": "max", "rtv_xoff": 100, "rtv_yoff": 0}
+        self.assertEqual(X.ExhibitPipeline._crop_like_rtv(f, rt).shape[:2], (800, 640))
+        rt = {"rtv_frame_width": "max", "rtv_frame_height": "max"}
+        self.assertEqual(X.ExhibitPipeline._crop_like_rtv(f, rt).shape[:2], (800, 1280))
 
 
 if __name__ == "__main__":

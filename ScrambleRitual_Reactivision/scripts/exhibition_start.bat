@@ -1,11 +1,13 @@
 @echo off
-REM Scramble Ritual - EXHIBITION launcher (reacTIVision edition).
-REM Starts the exhibition-only web server (webui.exhibit_server), which runs
-REM reacTIVision.exe as a child process, receives TUIO and sends OSC to
-REM SuperCollider / TouchDesigner. Creates .venv and installs requirements on
-REM first run, then opens the browser.
-REM   exhibition_start.bat              normal start (reacTIVision auto-starts)
-REM   exhibition_start.bat --no-rtv     do not auto-start reacTIVision
+REM Scramble Ritual - EXHIBITION launcher.
+REM Starts the exhibition-only web server (webui.exhibit_server), which runs the
+REM marker tracker (reacTIVision.exe or Ritualvision.exe) as a child process,
+REM receives TUIO and sends OSC to SuperCollider / TouchDesigner. Creates .venv
+REM and installs requirements on first run, then opens the browser.
+REM   exhibition_start.bat                          start with the tracker used last time
+REM   exhibition_start.bat --tracker ritualvision   edge-dash markers (Ritualvision); remembered
+REM   exhibition_start.bat --tracker reactivision   amoeba markers (reacTIVision); remembered
+REM   exhibition_start.bat --no-rtv                 do not auto-start the tracker
 REM   exhibition_start.bat --port 8765
 setlocal
 cd /d "%~dp0.."
@@ -28,7 +30,7 @@ if not exist ".venv\Scripts\python.exe" (
 )
 
 if not exist "%USERPROFILE%\scramble_ritual\reactivision\reacTIVision.exe" (
-  echo [warn] %USERPROFILE%\scramble_ritual\reactivision\reacTIVision.exe not found.
+  echo [warn] %USERPROFILE%\scramble_ritual\reactivision\reacTIVision.exe not found ^(only needed for --tracker reactivision^).
   echo        The server copies the reacTIVision-1.5.1-win64 folder there from Downloads on
   echo        first start ^(or set the exe path in the web UI^).
 )

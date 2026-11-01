@@ -47,6 +47,11 @@ PROJECT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 INSTALL_DIR = os.path.join(os.path.expanduser("~"), "scramble_ritual", "reactivision")
 #: server-side scratch (modes cache) next to the exe
 RTV_WORK_DIR = INSTALL_DIR
+#: Ritualvision: the edge-dash marker tracker (same XML files and TUIO output, own
+#: recognizer). Selected with the "tracker" setting; runs in place, never copied.
+RITUALVISION_EXE = os.path.join(os.path.expanduser("~"), "scramble_ritual", "Ritualvision",
+                                "Ritualvision.exe")
+TRACKERS = ("reactivision", "ritualvision")
 EXE_CANDIDATES = [
     os.path.join(INSTALL_DIR, "reacTIVision.exe"),
     os.path.join(os.path.expanduser("~"), "Downloads", "reacTIVision-1.5.1-win64",
@@ -54,6 +59,8 @@ EXE_CANDIDATES = [
 ]
 
 RTV_DEFAULTS = {
+    "tracker": "reactivision",   # reactivision | ritualvision (exhibition_start.bat --tracker, 마지막 선택 유지)
+    "ritualvision_exe": "",      # "" = ~/scramble_ritual/Ritualvision/Ritualvision.exe
     "rtv_exe": "",               # "" = 자동 탐색 (~/scramble_ritual/reactivision → Downloads)
     "rtv_autostart": True,       # 서버 시작 시 reacTIVision 자동 실행
     "rtv_no_window": False,      # -n : reacTIVision 창 없이 실행
@@ -107,6 +114,34 @@ def find_exe(override=""):
         if os.path.isfile(c):
             return c
     return None
+
+
+def find_ritualvision(override=""):
+    """Ritualvision.exe: an explicit path if it exists, else the default install."""
+    for c in (override, RITUALVISION_EXE):
+        if c and os.path.isfile(c):
+            return os.path.abspath(c)
+    return None
+
+
+def is_ritualvision(exe):
+    return bool(exe) and os.path.basename(exe).lower().startswith("ritualvision")
+
+
+def tracker_exe(cfg, exe_override=""):
+    """(engine, exe path or None) for the configured tracker."""
+    engine = cfg.get("tracker") if cfg.get("tracker") in TRACKERS else "reactivision"
+    if engine == "ritualvision":
+        return engine, find_ritualvision(cfg.get("ritualvision_exe", ""))
+    return engine, find_exe(cfg.get("rtv_exe") or exe_override)
+
+
+def _kill_tree(pid):
+    """Ritualvision.exe is a one-file bundle: a launcher plus the real process. Stopping
+    only the launcher leaves the child holding the camera, so stop the whole tree."""
+    if os.name == "nt":
+        subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True,
+                       creationflags=_no_window_flags())
 
 
 def ensure_local_install(exe, install_dir=INSTALL_DIR):
@@ -258,6 +293,8 @@ def list_modes(exe, refresh=False, timeout=15):
     if not exe:
         return {"cameras": [], "raw": "", "t": time.time(), "stale": False,
                 "error": "reacTIVision.exe 없음"}
+    if is_ritualvision(exe):                # no -l: modes come from the configured values
+        return {"cameras": [], "raw": "", "t": time.time(), "stale": False, "error": None}
     if not refresh and exe in _MODES_CACHE:
         return _MODES_CACHE[exe]
     try:
@@ -527,6 +564,7 @@ class ReactivisionProcess:
         self.camera_name = ""
         self.error = None
         self.exe = ""
+        self.engine = "reactivision"
         self.xml = {}
         self.started_at = None
         self._reader = None
@@ -546,16 +584,22 @@ class ReactivisionProcess:
             self.format = None
             self.format_source = None
             self.camera_name = ""
-            exe = find_exe(cfg.get("rtv_exe") or self.exe_override)
+            engine, exe = tracker_exe(cfg, self.exe_override)
+            self.engine = engine
             if not exe:
-                self.error = ("reacTIVision.exe 없음 - tools/reactivision/ 에 복사하거나 "
-                              "rtv_exe 경로를 지정하세요")
+                if engine == "ritualvision":
+                    self.error = (f"Ritualvision.exe 없음 - {RITUALVISION_EXE} 를 확인하거나 "
+                                  "ritualvision_exe 경로를 지정하세요")
+                else:
+                    self.error = ("reacTIVision.exe 없음 - tools/reactivision/ 에 복사하거나 "
+                                  "rtv_exe 경로를 지정하세요")
                 self._log(self.error)
                 return self.status()
-            try:
-                exe = ensure_local_install(exe)
-            except Exception as exc:
-                self._log(f"local copy failed ({exc}); running in place")
+            if engine == "reactivision":     # Ritualvision runs in place (its own folder)
+                try:
+                    exe = ensure_local_install(exe)
+                except Exception as exc:
+                    self._log(f"local copy failed ({exc}); running in place")
             self.exe = exe
             work_dir = self.work_dir or os.path.dirname(exe)
             modes = list_modes(exe)
@@ -603,6 +647,9 @@ class ReactivisionProcess:
         if p is None:
             return
         try:
+            if p.poll() is None and is_ritualvision(self.exe):
+                _kill_tree(p.pid)
+                p.wait(timeout)
             if p.poll() is None:
                 p.terminate()
                 try:
@@ -666,6 +713,7 @@ class ReactivisionProcess:
                 "running": running,
                 "pid": self.proc.pid if running else None,
                 "exe": self.exe,
+                "engine": self.engine,
                 "format": f"{fmt[0]}x{fmt[1]}@{fmt[2]}" if fmt else None,
                 "format_wh": [fmt[0], fmt[1]] if fmt else None,
                 "format_source": self.format_source,
@@ -708,6 +756,10 @@ class ExhibitObject:
     flip: bool = False
     pitch: float | None = None
     status: str = "tuio"
+    src_id: int = -1          # reacTIVision reading before idfix (-1 = idfix off)
+    fix_track: int = -1       # idfix track id (-1 = idfix off)
+    speed: float = 0.0        # table long sides / s (tracker/motion.py)
+    lifted: bool = False      # withheld by the lift cut
 
     @property
     def bits(self):           # tuner-compat: identity as a string
@@ -715,7 +767,7 @@ class ExhibitObject:
 
     @property
     def raw_id(self):
-        return self.code_id
+        return self.src_id if self.src_id >= 0 else self.code_id
 
     @property
     def label(self):

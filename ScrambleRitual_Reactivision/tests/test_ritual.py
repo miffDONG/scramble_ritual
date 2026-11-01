@@ -106,9 +106,11 @@ class TestRitual(unittest.TestCase):
         self.assertEqual(len(td), 1)
         bundle = td[0][1]
         messages = list(bundle)
-        self.assertEqual(len(messages), 16)
-        for index, (_, args) in enumerate(sound, 1):
+        self.assertEqual(len(messages), 20)      # heartbeat + count + 2 objects x 9 fields
+        for index, (_, args) in enumerate(sound):
             values = dict(zip(args[::2], args[1::2]))
+            hb = next(m for m in messages if m.address == "/scramble/heartbeat")
+            self.assertEqual(hb.params, [values.pop("heartbeat")])
             for field, value in values.items():
                 suffix = "pairID" if field == "pairId" else field
                 message = next(m for m in messages if m.address == f"/scramble/{suffix}{index}")
@@ -116,7 +118,7 @@ class TestRitual(unittest.TestCase):
                     self.assertAlmostEqual(message.params[0], value, places=5)
                 else:
                     self.assertEqual(message.params, [value])
-        self.assertEqual(next(m for m in messages if m.address == "/scramble/bits1").params, ["00000101"])
+        self.assertEqual(next(m for m in messages if m.address == "/scramble/bits0").params, ["00000101"])
 
     def test_real_udp_one_frame_one_bundle(self):
         from pythonosc.osc_packet import OscPacket
@@ -132,9 +134,9 @@ class TestRitual(unittest.TestCase):
                 payload, _ = receiver.recvfrom(65535)
                 self.assertTrue(payload.startswith(b"#bundle"))
                 packet = OscPacket(payload)
-                self.assertEqual(len(packet.messages), 16)
-                self.assertEqual({m.message.params[0] for m in packet.messages
-                                  if "heartbeat" in m.message.address}, {0})
+                self.assertEqual(len(packet.messages), 20)
+                self.assertEqual([m.message.params[0] for m in packet.messages
+                                  if "heartbeat" in m.message.address], [0])
                 receiver.settimeout(.05)
                 with self.assertRaises(socket.timeout):
                     receiver.recvfrom(65535)

@@ -80,7 +80,7 @@ SOUND 프로그램에는 기존 obj당 키·값 교대 메시지를 활성 규�
 | id | int | 고유 obj ID, 0~24 |
 | bits | string | id의 8비트 이진 표기 |
 | x | float | ROI 폭 기준 정규화 위치 |
-| y | float | ROI 높이 기준 정규화 위치 |
+| y | float | ROI 높이 기준 정규화 위치. 아래=0, 위=1 |
 | tilt | float | 기존 각도 규약, 도 단위 |
 | tension | float | 보정된 MST 이웃 tension의 max, 0~1 |
 | pairId | int | 대표 MST 이웃의 고유 ID, 없으면 -1 |
@@ -97,45 +97,50 @@ SOUND 프로그램에는 기존 obj당 키·값 교대 메시지를 활성 규�
 
 ### 필드명 + 세포 목록 번호
 
-TD 채널 이름은 `obj1`, `obj2`가 아니라 `id1`, `x1`, `y1`, `tilt1`, `tension1`, `pairID1`, `id2`, ... 형식으로 구성한다. 목록 번호는 1부터 시작하며, 인식 순서로 유지되는 현재 목록의 위치다. 고유 ID 값은 계속 0~24다.
+TD 채널 이름은 `obj0`, `obj1`이 아니라 `id0`, `x0`, `y0`, `tilt0`, `tension0`, `pairID0`, `id1`, ... 형식으로 구성한다. 목록 번호는 0부터 시작하며, 인식 순서로 유지되는 현재 목록의 위치다. 고유 ID 값은 계속 0~24다. 목록 번호와 고유 ID는 범위가 겹치지만 서로 무관하다(`id0`은 목록 첫 자리이고 그 값이 고유 ID다).
 
-- 유지 목록이 `[5, 3, 12]`이면 `id1=5`, `id2=3`, `id3=12`다.
-- 3의 소실이 확정되어 `[5, 12]`가 되면 `id1=5`, `id2=12`다. 뒤 슬롯은 당겨지며 목록 번호를 영구 식별자로 사용하지 않는다.
+- 유지 목록이 `[5, 3, 12]`이면 `id0=5`, `id1=3`, `id2=12`다.
+- 3의 소실이 확정되어 `[5, 12]`가 되면 `id0=5`, `id1=12`다. 뒤 슬롯은 당겨지며 목록 번호를 영구 식별자로 사용하지 않는다.
 - pairID의 값은 상대의 고유 ID다. 상대의 목록 번호로 변환하지 않는다.
 - 각도 필드는 기존 명칭인 `tilt`를 사용한다. 요청 예시의 `tit`는 `tilt`로 정리한다.
 - 내부 대표 연결 명칭은 pairId를 유지하되 TD 채널 명칭은 요청한 `pairID`로 표기한다.
 
 ### 채널 이름을 OSC 주소로 전달
 
-키 문자열을 `/scramble/obj` 메시지의 인자로 나열하는 것만으로는 원하는 채널명이 생성된다고 보장할 수 없다. 따라서 TD용 전송은 **필드별 OSC 주소 + 원래 타입의 인자 하나**로 표현한다. SOUND의 키·값 교대 메시지는 그대로 유지한다. TD에도 bits를 문자열로 포함하며 필드를 삭제하거나 타입을 변환하지 않는다.
+키 문자열을 `/scramble/obj` 메시지의 인자로 나열하는 것만으로는 원하는 채널명이 생성된다고 보장할 수 없다. 따라서 TD용 전송은 **필드별 OSC 주소 + 원래 타입의 인자 하나**로 표현한다. heartbeat만 obj 필드가 아니라 bundle당 하나의 `/scramble/heartbeat`로 보낸다. SOUND의 키·값 교대 메시지는 그대로 유지한다. TD에도 bits를 문자열로 포함하며 필드를 삭제하거나 타입을 변환하지 않는다.
 
 ### 프레임당 하나의 OSC bundle
 
-해당 프레임의 모든 obj 필드 메시지를 인식 목록 순서로 하나의 OSC bundle에 담아 TD obj 수신 포트로 한 번 전송한다. obj별 또는 필드별로 별도 UDP 송신하지 않는다. 아래 줄들은 개별 패킷이 아니라 같은 bundle 안의 OSC 메시지들이다. bundle은 즉시 처리하도록 전송한다.
+해당 프레임의 heartbeat 메시지 하나와 모든 obj 필드 메시지를 인식 목록 순서로 하나의 OSC bundle에 담아 TD obj 수신 포트로 한 번 전송한다. obj별 또는 필드별로 별도 UDP 송신하지 않는다. 아래 줄들은 개별 패킷이 아니라 같은 bundle 안의 OSC 메시지들이다. bundle은 즉시 처리하도록 전송한다.
 
 ```text
-/scramble/id1        5
-/scramble/bits1      "00000101"
-/scramble/x1         0.5964
-/scramble/y1         0.4421
-/scramble/tilt1      100.64
-/scramble/tension1   1.0
-/scramble/pairID1    3
-/scramble/heartbeat1 20
+/scramble/heartbeat  20
+/scramble/count      2
 
-/scramble/id2        3
-/scramble/bits2      "00000011"
-/scramble/x2         0.62
-/scramble/y2         0.45
-/scramble/tilt2      0.0
-/scramble/tension2   1.0
-/scramble/pairID2    5
-/scramble/heartbeat2 20
+/scramble/id0        5
+/scramble/bits0      "00000101"
+/scramble/x0         0.5964
+/scramble/y0         0.4421
+/scramble/tilt0      100.64
+/scramble/tension0   1.0
+/scramble/pairID0    3
+/scramble/pairX0     0.62
+/scramble/pairY0     0.45
+
+/scramble/id1        3
+/scramble/bits1      "00000011"
+/scramble/x1         0.62
+/scramble/y1         0.45
+/scramble/tilt1      0.0
+/scramble/tension1   1.0
+/scramble/pairID1    5
+/scramble/pairX1     0.5964
+/scramble/pairY1     0.4421
 ```
 
-프레임마다 목록 1번의 필드를 위 순서로 bundle에 넣고 다음 목록 번호로 진행한다. SOUND와 TD는 같은 id, bits, x, y, tilt, tension, pairId, heartbeat 값을 받는다. TD의 pairID 표기는 필드명 표현 차이일 뿐 값과 의미는 같다.
+프레임마다 heartbeat와 count를 먼저 넣고, 목록 0번의 필드를 위 순서로 bundle에 넣은 뒤 다음 목록 번호로 진행한다. obj가 하나도 없는 프레임에도 heartbeat와 count(0)만 담은 bundle을 보낸다. SOUND와 TD는 같은 id, bits, x, y, tilt, tension, pairId, heartbeat 값을 받는다. TD의 pairID 표기는 필드명 표현 차이일 뿐 값과 의미는 같다.
 
-TD의 OSC In CHOP에서 `Strip Prefix Segments = 1`로 `/scramble` 프리픽스를 제거하여 `id1`, `x1` 등의 숫자 채널명을 사용한다. bitsN은 문자열이므로 OSC In DAT에서 문자열로 읽는다. 수신 경로 구성은 TD에서 확인하며 송신 측에서 bits를 숫자로 바꾸지 않는다.
+TD의 OSC In CHOP에서 `Strip Prefix Segments = 1`로 `/scramble` 프리픽스를 제거하여 `heartbeat`, `id0`, `x0` 등의 숫자 채널명을 사용한다. bitsN은 문자열이므로 OSC In DAT에서 문자열로 읽는다. 수신 경로 구성은 TD에서 확인하며 송신 측에서 bits를 숫자로 바꾸지 않는다.
 
 하나의 bundle은 한 UDP 데이터그램으로 송신하지만 TD 내부의 모든 필드 동시 적용까지 보장하는 규약은 아니다. 전체 obj bundle 크기는 구현 시 확인한다. 일반 LAN의 MTU를 초과하면 IP 단편화가 발생할 수 있으므로 프레임당 한 번 송신은 패킷 크기를 줄이는 것과 다르다.
 
@@ -146,23 +151,28 @@ TD의 OSC In CHOP에서 `Strip Prefix Segments = 1`로 `/scramble` 프리픽스�
 | idN | int | 고유 obj ID, 0~24 |
 | bitsN | string | SOUND와 동일한 id의 8비트 이진 표기 |
 | xN | float | ROI 폭 기준 정규화 위치 |
-| yN | float | ROI 높이 기준 정규화 위치 |
+| yN | float | ROI 높이 기준 정규화 위치. 아래=0, 위=1 |
 | tiltN | float | 기존 각도 규약, 도 단위 |
 | tensionN | float | 보정된 MST 이웃 tension의 max, 0~1 |
 | pairIDN | int | 대표 MST 이웃의 고유 ID, 없으면 -1 |
-| heartbeatN | int | 0~100 순환 값. 같은 프레임의 모든 목록 번호에 동일한 값 사용 |
+| pairXN | float | **TD 전용.** 짝 노드의 xN 값(같은 프레임), 짝이 없으면 -1.0 |
+| pairYN | float | **TD 전용.** 짝 노드의 yN 값(같은 프레임), 짝이 없으면 -1.0 |
+| heartbeat | int | 0~100 순환 값. bundle당 하나, 목록 번호 없음. obj가 없어도 전송 |
+| count | int | **TD 전용.** 현재 테이블 위 인식 obj 개수 = 이 bundle의 목록 번호 개수(0~count-1). heartbeat와 함께 매 bundle 전송 |
 
-TD 전송에도 SOUND의 모든 obj 필드를 포함한다. 목록 번호 접미사와 pairID 표기 외에는 값과 타입을 변경하지 않는다.
+TD 전송에도 SOUND의 모든 obj 필드를 포함한다. 목록 번호 접미사, pairID 표기, heartbeat를 bundle당 하나로 합친 것 외에는 값과 타입을 변경하지 않는다. pairXN, pairYN은 짝 노드의 위치를 TD에서 바로 쓰도록 TD에만 추가한 필드이며 SOUND 등 다른 형식에는 보내지 않는다.
 
-heartbeat는 0부터 시작해 송신 프레임마다 1씩 증가하고, 100 다음에는 0으로 돌아간다. 각 필드 전송마다 증가시키지 않는다. 프로그램의 전송 지속 여부와 obj별 갱신 상태를 확인하는 용도이며 전체 메시지 수신 완료를 보장하지 않는다.
+heartbeat는 0부터 시작해 송신 프레임마다 1씩 증가하고, 100 다음에는 0으로 돌아간다. 각 필드 전송마다 증가시키지 않는다. TD에서 heartbeat는 **네트워크가 흐르고 있는지 보는 표시**일 뿐이다. TD는 받은 값을 raw 그대로 보여 주고, 값이 계속 바뀌면 전송이 살아 있는 것이다. UDP라 송신 측에서 수신 성공을 확인하거나 보장하지 않으며, heartbeat로 전체 메시지 수신 완료나 obj별 갱신 상태를 판단하지 않는다.
 
-별도의 프레임 헤더, end 메시지, objCount 메시지는 추가하지 않는다. 줄어든 목록의 남은 TD 채널은 heartbeatN 갱신 여부로 만료 처리하는 방향이며 구체적인 수신 타임아웃은 TD에서 정한다. 모든 obj가 없으면 heartbeat도 오지 않는다는 제한이 있다.
+obj 만료는 네트워크가 아니라 인식 단계에서 처리한다. 서버가 reacTIVision 프레임을 기준으로, 인식됐던 id가 5프레임 이상 연속으로 보이지 않으면 목록에서 제거한다.
+
+전송 주기는 카메라 fps(reacTIVision 보고값, 없으면 `rtv_fps`)로 일정하다. reacTIVision은 변화가 없으면 TUIO를 거의 보내지 않으므로(빈 테이블에서 약 1회/초), 서버의 송신 클록이 TUIO 프레임 사이를 마지막 TUIO 상태로 채워 같은 fps로 bundle을 보낸다. 따라서 obj가 없어도 heartbeat·count가 같은 속도로 오고, 마지막 obj가 사라질 때 count 1→0도 카메라 5프레임(120fps에서 약 42ms) 안에 반영된다. TUIO가 3초 이상 끊기면(reacTIVision 종료) 클록도 멈추고 heartbeat가 멈춘다. 별도의 프레임 헤더나 end 메시지는 추가하지 않는다. TD는 count 이상의 목록 번호 채널을 이번 프레임에 없는 자리로 처리할 수 있다.
 
 ## 현재 설계의 현장 설정 항목
 
 - 접촉거리 보정 margin의 측정값.
 - TD obj 수신 포트 번호와 OSC 주소의 채널명 해석 설정.
-- 소실 후 남은 TD 채널의 만료 시간. 서버의 5프레임 소실 유예와 별개인 수신 측 설정이다.
+- 목록이 줄었을 때 TD에 남는 뒤쪽 채널(예: `id2`)의 처리. bundle에 더 이상 오지 않는 번호이며, 수신 측 설정이다.
 
 위 항목을 이유로 기각된 프레임 헤더나 종료 메시지를 임의로 추가하지 않는다.
 

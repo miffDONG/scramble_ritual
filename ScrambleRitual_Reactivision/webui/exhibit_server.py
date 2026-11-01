@@ -29,15 +29,18 @@ import re
 import sys
 import threading
 import time
+from dataclasses import replace
 
 import cv2
 import numpy as np
 from flask import Flask, Response, jsonify, request, send_from_directory
 
 from tracker.reactivision import (
-    RTV_DEFAULTS, ExhibitObject, ReactivisionProcess, TuioReceiver,
-    default_mode, find_exe, import_xml, list_modes, original_xml_paths,
+    INSTALL_DIR, RTV_DEFAULTS, TRACKERS, ExhibitObject, ReactivisionProcess, TuioReceiver,
+    default_mode, find_exe, import_xml, list_modes, original_xml_paths, tracker_exe,
 )
+from tracker.idfix import IdFixer, IdModel, default_trees_path, parse_trees, tree_steps
+from tracker.motion import MotionGate
 from tracker.virtual import LIMIT as VIRTUAL_LIMIT, VirtualSource, VirtualTable
 from tracker.ritual import RitualState
 from tracker.tension import (
@@ -50,6 +53,7 @@ CFG_PATH = os.path.join(HERE, "exhibit_config.json")
 CONFIGS_DIR = os.path.join(HERE, "..", "configs", "exhibit")
 STATIC_DIR = os.path.join(HERE, "static")
 TEST_OBJECTS_PATH = os.path.join(HERE, "test_objects.json")   # --test: virtual objects
+IDFIX_COUNTS_PATH = os.path.join(CONFIGS_DIR, "id_confusion.json")   # learned misreads
 
 # OSC payload field order (list format = these positions; dict/json = keys).
 # `id` is the reacTIVision fiducial symbol id — the object's identity.
@@ -94,6 +98,22 @@ EXHIBIT_DEFAULTS = {
     "tension_knn": 3,
     "tension_link_radius": 0.2,
     "show_graph": True,
+    # marker-id correction (tracker/idfix.py). Off: the id reacTIVision sends
+    # goes out unchanged (ids >= 25 and duplicates included); on: tracked,
+    # corrected, unique ids 0..24
+    "idfix_enabled": False,
+    "idfix_gate": 0.5,           # track gate, x d_near (contact centre distance)
+    "idfix_lost_s": 0.5,         # a track unseen this long is dropped (max 0.5)
+    "idfix_first_delay_s": 0.1,  # a new object waits up to this for a confident id
+    "idfix_switch_frames": 15,   # frames a better id must lead before the output id changes
+    "idfix_learn": False,        # count misreads of locked tracks into id_confusion.json
+    "idfix_memory_s": 10.0,      # an id stays remembered at its last spot this long
+    # lift cut (tracker/motion.py): an object moving faster than lift_cut_speed
+    # (table long sides / s) for lift_cut_hold_s is not sent (carried off the
+    # table, still decoded from below). Off: nothing is withheld.
+    "lift_cut_enabled": False,
+    "lift_cut_speed": 0.3,
+    "lift_cut_hold_s": 0.1,
     # preview
     "proc_max_dim": 1280,
     "jpeg_quality": 80,
@@ -157,10 +177,26 @@ def osc_targets(rt):
     return out
 
 
-def object_json(o, tension=0.0):
+def osc_xy(cx, cy, roi_px, W, H):
+    """Canvas px -> the x, y sent over OSC: 0..1 of the ROI (whole canvas
+    without one), clamped. x: left 0, right 1. y: bottom 0, top 1."""
+    if roi_px:
+        ox, oy, x2, y2 = roi_px
+        rw, rh = max(x2 - ox, 1), max(y2 - oy, 1)
+    else:
+        ox, oy, rw, rh = 0, 0, max(W, 1), max(H, 1)
+    x = max(0.0, min(1.0, (cx - ox) / rw))
+    y = max(0.0, min(1.0, (cy - oy) / rh))
+    return round(x, 4), round(1.0 - y, 4)
+
+
+def object_json(o, tension=0.0, xy=None):
+    """`xy`: the OSC x, y (osc_xy) — shown in the web table so it matches
+    what receivers get; falls back to the raw TUIO values."""
+    x, y = xy if xy else (round(o.nx, 4), round(o.ny, 4))
     return {"track": o.track_id, "id": o.code_id, "bits": id_bits(o.code_id),
-            "label": o.label,
-            "x": round(o.nx, 4), "y": round(o.ny, 4),
+            "label": o.label, "raw": o.src_id, "speed": o.speed,
+            "x": x, "y": y,
             "cx": round(o.cx, 1), "cy": round(o.cy, 1),
             "angle": round(o.angle, 1), "tension": tension}
 
@@ -175,17 +211,22 @@ def hexagon_pts(cx, cy, r, angle_deg):
 
 
 def draw_exhibit_overlay(W, H, objs, graph, rtv_status, tuio_fps, roi_px, rt,
-                         infer_on=True, test_mode=False, hex_r=0.0):
+                         infer_on=True, test_mode=False, hex_r=0.0, camera=None):
     """Synthetic preview: reacTIVision owns the camera, so we draw what TUIO
     tells us on a blank canvas at the capture aspect. In test mode the
     virtual objects are drawn as hexagons sized so that two of them touch
-    edge-to-edge exactly at tension 1 (centre distance = d_near)."""
-    vis = np.full((H, W, 3), 18, np.uint8)
-    step = max(40, W // 16)
-    for x in range(0, W, step):
-        cv2.line(vis, (x, 0), (x, H), (32, 32, 32), 1)
-    for y in range(0, H, step):
-        cv2.line(vis, (0, y), (W, y), (32, 32, 32), 1)
+    edge-to-edge exactly at tension 1 (centre distance = d_near).
+    `camera`: a real frame (camera borrowed for ROI setup) drawn instead of
+    the blank grid, stretched to the canvas like the TUIO coordinates."""
+    if camera is not None:
+        vis = cv2.resize(camera, (W, H), interpolation=cv2.INTER_AREA)
+    else:
+        vis = np.full((H, W, 3), 18, np.uint8)
+        step = max(40, W // 16)
+        for x in range(0, W, step):
+            cv2.line(vis, (x, 0), (x, H), (32, 32, 32), 1)
+        for y in range(0, H, step):
+            cv2.line(vis, (0, y), (W, y), (32, 32, 32), 1)
     if roi_px:
         rx, ry, rx2, ry2 = roi_px
         cv2.rectangle(vis, (rx, ry), (rx2, ry2), (0, 220, 255), 2)
@@ -203,18 +244,22 @@ def draw_exhibit_overlay(W, H, objs, graph, rtv_status, tuio_fps, roi_px, rt,
         a = math.radians(o.angle)
         ex, ey = int(cx + math.cos(a) * radius * 1.5), int(cy + math.sin(a) * radius * 1.5)
         cv2.line(vis, (cx, cy), (ex, ey), col, 2, cv2.LINE_AA)
-        cv2.putText(vis, f"#{o.code_id}  s{o.track_id}  {o.angle:.0f}",
+        fix = f"<{o.src_id}" if o.src_id >= 0 and o.src_id != o.code_id else ""
+        cv2.putText(vis, f"#{o.code_id}{fix}  s{o.track_id}  {o.angle:.0f}",
                     (cx - 30, cy + radius + 18), cv2.FONT_HERSHEY_SIMPLEX, 0.5,
                     col, 1, cv2.LINE_AA)
     if graph and graph[0]:
         draw_tension_graph(vis, graph)
     st = rtv_status or {}
     run = "RUN" if st.get("running") else "STOP"
-    if test_mode:
+    if camera is not None:
+        hud = f"CAMERA (ROI setup) {W}x{H} - reacTIVision paused, OSC idle"
+    elif test_mode:
         hud = f"TEST (virtual, no reacTIVision) {W}x{H} frames={tuio_fps:.0f}fps objs={len(objs)}"
     else:
         hud = (f"reacTIVision {run} pid={st.get('pid') or '-'} {st.get('format') or '-'} "
-               f"tuio={tuio_fps:.0f}fps objs={len(objs)}")
+               f"tuio={tuio_fps:.0f}fps objs={len(objs)} "
+               + ("IDFIX ON" if rt.get("idfix_enabled") else "IDFIX OFF (raw ids)"))
     cv2.putText(vis, hud, (10, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.6,
                 (255, 255, 255), 2, cv2.LINE_AA)
     if not infer_on:
@@ -240,13 +285,22 @@ class ExhibitPipeline(threading.Thread):
     PREVIEW_MAX_W = 800        # JPEG is encoded from a downscaled copy (cheap)
 
     def __init__(self, autostart=None, exe_override="", test_mode=False,
-                 test_objects_path=TEST_OBJECTS_PATH):
+                 test_objects_path=TEST_OBJECTS_PATH, tracker=None):
         super().__init__(daemon=True)
         self.lock = threading.Lock()
         self.test_mode = bool(test_mode)
         self.rt = self._initial_config(exe_override)
         if autostart is not None and not self.test_mode:
             self.rt["rtv_autostart"] = bool(autostart)
+        if tracker in TRACKERS and not self.test_mode:
+            # an explicit choice is saved, so the next start without --tracker keeps it
+            self.rt["tracker"] = tracker
+            try:
+                saved = self._load_saved(CFG_PATH)
+                saved["tracker"] = tracker
+                self._dump(CFG_PATH, saved)
+            except Exception:
+                pass
         self.rtv = ReactivisionProcess(exe=exe_override)
         self.virtual = VirtualTable(test_objects_path) if self.test_mode else None
         self._hex_r = 0.0
@@ -270,8 +324,17 @@ class ExhibitPipeline(threading.Thread):
         self._last_objs = []        # last TUIO objects with canvas cx/cy (for measurements)
         self._last_osc_log = []     # monitor rows from the last frame sent (receiver thread)
         self._last_roi_px = None
+        self._frame_lock = threading.Lock()   # TUIO thread vs send clock
+        self._last_frame_t = 0.0
         self.active_name = ""
         self.running = True
+        # camera borrowed from reacTIVision for ROI setup (opened/released on
+        # the pipeline thread only; Flask threads just set _cam_want)
+        self._cam_want = False
+        self._cam = None
+        self._cam_frame = None
+        self._cam_error = None
+        self._cam_seen_t = 0.0
 
     # -- config ------------------------------------------------------------
 
@@ -534,6 +597,103 @@ class ExhibitPipeline(threading.Thread):
         })
         return st
 
+    # -- camera borrow (ROI setup with the real image) ------------------------
+
+    CAM_IDLE_S = 15.0          # no UI poll for this long -> camera back to reacTIVision
+
+    def camera_borrow(self, on):
+        if self.test_mode:
+            return {"ok": False, "error": "테스트 모드에서는 카메라를 쓰지 않습니다"}
+        with self.lock:
+            self._cam_want = bool(on)
+            self._cam_seen_t = time.perf_counter()
+            if on:
+                self._cam_error = None
+        return {"ok": True, **self.camera_state()}
+
+    def camera_touch(self):
+        """The UI is still open (called from /api/state polling)."""
+        self._cam_seen_t = time.perf_counter()
+
+    def camera_state(self):
+        f = self._cam_frame
+        return {"borrowed": self._cam_want, "open": self._cam is not None,
+                "error": self._cam_error,
+                "size": [int(f.shape[1]), int(f.shape[0])] if f is not None else None}
+
+    @staticmethod
+    def _crop_like_rtv(frame, rt):
+        """Apply camera.xml <frame width height xoff yoff> so the image covers
+        the same area reacTIVision normalizes TUIO x/y against."""
+        def num(v):
+            try:
+                return int(v)
+            except (TypeError, ValueError):
+                return None
+        h, w = frame.shape[:2]
+        fw, fh = num(rt.get("rtv_frame_width")), num(rt.get("rtv_frame_height"))
+        if fw is None and fh is None:
+            return frame
+        x0 = max(0, min(w - 1, num(rt.get("rtv_xoff")) or 0))
+        y0 = max(0, min(h - 1, num(rt.get("rtv_yoff")) or 0))
+        x1 = min(w, x0 + fw) if fw else w
+        y1 = min(h, y0 + fh) if fh else h
+        return frame[y0:y1, x0:x1]
+
+    def _open_camera(self, rt):
+        idx = int(rt.get("rtv_camera") or 0)
+        api = cv2.CAP_DSHOW if sys.platform == "win32" else cv2.CAP_ANY
+        cap = cv2.VideoCapture(idx, api)
+        if not cap.isOpened():
+            cap.release()
+            return None
+        if rt.get("rtv_compress", True):
+            cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+        w, h = int(rt.get("rtv_width") or 0), int(rt.get("rtv_height") or 0)
+        if w and h:
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, w)
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, h)
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        return cap
+
+    def _release_camera(self):
+        if self._cam is not None:
+            try:
+                self._cam.release()
+            except Exception:
+                pass
+        self._cam = None
+        self._cam_frame = None
+
+    def _ensure_camera(self, rt):
+        """Hand the camera between reacTIVision and the web preview."""
+        if self._cam_want and time.perf_counter() - self._cam_seen_t > self.CAM_IDLE_S:
+            self._cam_want = False             # UI gone: never leave reacTIVision off
+        if self._cam_want and self._cam is None:
+            self.rtv.stop()
+            time.sleep(0.5)                    # let DirectShow release the device
+            cap = None
+            for _ in range(3):
+                cap = self._open_camera(rt)
+                if cap is not None:
+                    break
+                time.sleep(0.5)
+            if cap is None:
+                with self.lock:
+                    self._cam_want = False
+                    self._cam_error = f"카메라 {rt.get('rtv_camera', 0)} 열기 실패"
+                    self._rtv_dirty = True
+                return
+            self._cam = cap
+        elif not self._cam_want and self._cam is not None:
+            self._release_camera()
+            with self.lock:
+                self._rtv_dirty = True         # restarts only if rtv_autostart
+        if self._cam is not None:
+            ok, frame = self._cam.read()
+            if ok and frame is not None:
+                self._cam_frame = self._crop_like_rtv(frame, rt)
+
     # -- main loop ---------------------------------------------------------
 
     TUIO_RETRY_S = 2.0         # re-bind interval after a failed bind (port busy)
@@ -570,7 +730,7 @@ class ExhibitPipeline(threading.Thread):
             self.tuio.start()
             with self.lock:
                 self._tuio_dirty = False
-        if self._rtv_dirty:
+        if self._rtv_dirty and not self._cam_want and self._cam is None:
             with self.lock:
                 self._rtv_dirty = False
                 want = bool(rt.get("rtv_autostart", True))
@@ -580,6 +740,7 @@ class ExhibitPipeline(threading.Thread):
                 self.rtv.stop()
 
     def _stop_exhibit(self):
+        self._release_camera()
         self.rtv.stop()
         if self.tuio is not None:
             self.tuio.stop()
@@ -606,31 +767,184 @@ class ExhibitPipeline(threading.Thread):
         only what the OSC output needs (canvas coords -> ROI -> tension ->
         send), so OSC keeps up with reacTIVision's frame rate regardless of
         what the preview/UI thread is doing."""
+        with self._frame_lock:
+            self._process_frame(objs)
+
+    # -- send clock: keeps OSC at the camera fps while reacTIVision is idle ----
+
+    #: reacTIVision sends TUIO only when something changes (~1 bundle/s with
+    #: an empty table). Between real frames the clock repeats the last
+    #: committed TUIO state at the camera fps, so heartbeat/count keep the
+    #: same rate and the 5-frame expiry (count 1 -> 0) takes 5 camera frames.
+    CLOCK_ALIVE_S = 3.0        # no TUIO for this long = reacTIVision gone: clock stops
+
+    def _clock_period(self, rt):
+        fmt = self.rtv.format
+        fps = float(fmt[2]) if fmt and len(fmt) > 2 and fmt[2] else float(rt.get("rtv_fps") or 120)
+        return 1.0 / max(1.0, min(240.0, fps))
+
+    def _clock_tick(self, period):
+        """Process one frame from the last TUIO state if no frame (real or
+        clock) happened within `period`. Returns True when a frame was sent."""
+        t = self.tuio
+        if not isinstance(t, TuioReceiver) or t.age() > self.CLOCK_ALIVE_S:
+            return False
+        with self._frame_lock:
+            if time.perf_counter() - self._last_frame_t < period * 0.95:
+                return False
+            self._process_frame(t.snapshot(), real=False)
+        return True
+
+    def _clock_loop(self):
+        while self.running:
+            period = self._clock_period(self._rt_view())
+            try:
+                self._clock_tick(period)
+            except Exception as exc:
+                if self.tuio is not None:
+                    self.tuio.on_frame_error = f"clock: {exc}"
+            wait = self._last_frame_t + period - time.perf_counter()
+            time.sleep(min(max(wait, 0.001), period))
+
+    def _process_frame(self, objs, real=True):
+        """`real`: a new TUIO frame (False = the send clock repeating the
+        last state; idfix then reuses its last output instead of counting
+        the same reading twice)."""
+        self._last_frame_t = time.perf_counter()
         rt = self._rt_view()
         W, H = self._canvas_size(rt)
         self._size = (W, H)
         for o in objs:
             o.cx, o.cy = o.nx * W, o.ny * H
         roi_px = roi_to_px(rt.get("roi"), W, H)
+        objs = self._idfix_frame(rt, objs, roi_px, W, H, real)
+        objs = self._motion_frame(rt, objs, roi_px, W, H, real)
         log = self._send_osc(rt, objs, (W, H), roi_px, send=self.infer_on)
         self._last_objs = list(self._ritual.objects.values())
         self._last_roi_px = roi_px
         if log is not None:            # None = monitor rows skipped this frame
             self._last_osc_log = log
 
+    # -- marker-id correction (optional) ----------------------------------------
+
+    def _idfix_build(self):
+        steps = None
+        if not str(self._rt_view().get("rtv_tree") or "").strip():   # prior is for default.trees
+            exe = find_exe(self._rt_view().get("rtv_exe") or "")
+            for d in (INSTALL_DIR, os.path.dirname(exe) if exe else None):
+                path = default_trees_path(d) if d else ""
+                if path and os.path.isfile(path):
+                    try:
+                        steps = tree_steps(parse_trees(path))
+                    except Exception:
+                        steps = None
+                    break
+        return IdFixer(IdModel(steps, IDFIX_COUNTS_PATH))
+
+    def _idfix_frame(self, rt, objs, roi_px, W, H, real):
+        """idfix on: ROI filter -> IdFixer (real frames only) -> corrected
+        objects with unique ids 0..24. Off: objects pass through untouched."""
+        if not rt.get("idfix_enabled"):
+            if getattr(self, "_idfix", None) is not None:
+                self._idfix.reset()
+                self._idfix_out = []
+            return objs
+        if getattr(self, "_idfix", None) is None:
+            self._idfix = self._idfix_build()
+            self._idfix_out = []
+        if not real:
+            return [replace(o) for o in self._idfix_out]
+        if roi_px:
+            x1, y1, x2, y2 = roi_px
+            objs = [o for o in objs if x1 <= o.cx < x2 and y1 <= o.cy < y2]
+            long_px = max(x2 - x1, y2 - y1, 1)
+        else:
+            long_px = max(W, H)
+        side_px = float(rt.get("object_side_px", 0.0) or 0.0)
+        d_near = tension_thresholds(rt, side_px, long_px)[0]
+        fx = self._idfix
+        fx.configure(gate_px=float(rt.get("idfix_gate") or 0.5) * d_near * long_px,
+                     lost_s=rt.get("idfix_lost_s", 0.5),
+                     first_delay_s=rt.get("idfix_first_delay_s", 0.1),
+                     switch_frames=rt.get("idfix_switch_frames", 15),
+                     learn=rt.get("idfix_learn", False),
+                     memory_s=rt.get("idfix_memory_s", 10.0),
+                     table_px=long_px)
+        self._idfix_out = fx.update(objs, time.perf_counter())
+        return [replace(o) for o in self._idfix_out]
+
+    def _motion_frame(self, rt, objs, roi_px, W, H, real):
+        """Speed of every object; with the lift cut on, fast movers are
+        withheld. The send clock (real=False) repeats the last result."""
+        if getattr(self, "_motion", None) is None:
+            self._motion = MotionGate()
+            self._motion_out = []
+        if not real:
+            return [replace(o) for o in self._motion_out]
+        long_px = (max(roi_px[2] - roi_px[0], roi_px[3] - roi_px[1], 1)
+                   if roi_px else max(W, H))
+        try:
+            speed = max(0.01, float(rt.get("lift_cut_speed") or 0.3))
+            hold = min(0.5, max(0.0, float(rt.get("lift_cut_hold_s") or 0.0)))
+        except (TypeError, ValueError):
+            speed, hold = 0.3, 0.1
+        self._motion_out = self._motion.update(
+            objs, time.perf_counter(), long_px, bool(rt.get("lift_cut_enabled")),
+            cut_speed=speed, hold_s=hold)
+        return [replace(o) for o in self._motion_out]
+
+    def idfix_reset(self, learned=False):
+        fx = getattr(self, "_idfix", None)
+        if fx is None:
+            fx = self._idfix = self._idfix_build()
+            self._idfix_out = []
+        with self._frame_lock:
+            fx.reset()
+            if learned:
+                fx.model.reset()
+                fx.model.save_if_dirty()
+        return {"ok": True}
+
+    def idfix_pin(self, track, true_id):
+        """Calibration: name the true id of an idfix track (-1 releases)."""
+        fx = getattr(self, "_idfix", None)
+        if fx is None:
+            return {"ok": False, "error": "보정이 꺼져 있거나 아직 프레임이 없습니다"}
+        try:
+            track, true_id = int(track), int(true_id)
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "track / id 가 숫자가 아닙니다"}
+        with self._frame_lock:
+            ok = fx.pin(track, true_id)
+        return {"ok": ok} if ok else {"ok": False, "error": f"트랙 {track} 없음"}
+
+    def idfix_state(self):
+        if not self._rt_view().get("idfix_enabled"):
+            return None
+        fx = getattr(self, "_idfix", None)
+        if fx is None:              # on, but no TUIO frame yet
+            return {"tracks": [], "frames": 0, "corrected": 0, "switches": 0,
+                    "events": [], "learned": []}
+        return fx.stats()
+
     # -- preview / UI loop (pipeline thread, OVERLAY_HZ) -----------------------
 
     def run(self):
+        if not self.test_mode:      # test mode: VirtualSource already runs at fps
+            threading.Thread(target=self._clock_loop, daemon=True, name="osc-clock").start()
         while self.running:
             rt = self._rt_view()
             try:
                 self._ensure(rt)
+                if not self.test_mode:
+                    self._ensure_camera(rt)
                 time.sleep(max(0.0, 1.0 / self.OVERLAY_HZ - (time.perf_counter() - self._overlay_last)))
                 W, H = self._canvas_size(rt)
                 if not self._size[0]:
                     self._size = (W, H)
                 objs = list(self._last_objs)
-                stale = self.tuio is None or self.tuio.age() > float(rt.get("rtv_stale_s") or 1.0)
+                stale = (self.tuio is None or time.perf_counter() - self._last_frame_t
+                         > float(rt.get("rtv_stale_s") or 1.0))
                 if stale:                      # TUIO stopped: show (and report) nothing
                     objs = []
                     self._graph = None
@@ -644,20 +958,30 @@ class ExhibitPipeline(threading.Thread):
                 vis = draw_exhibit_overlay(W, H, objs, self._graph, st,
                                            self.tuio.fps if self.tuio else 0.0,
                                            roi_px, rt, self.infer_on,
-                                           test_mode=self.test_mode, hex_r=self._hex_r)
+                                           test_mode=self.test_mode, hex_r=self._hex_r,
+                                           camera=self._cam_frame if self._cam is not None else None)
                 if self.virtual is not None:
                     self.virtual.save_if_dirty()
+                fx = getattr(self, "_idfix", None)
+                if fx is not None and time.perf_counter() - getattr(self, "_idfix_saved_t", 0.0) > 10.0:
+                    self._idfix_saved_t = time.perf_counter()
+                    try:
+                        fx.model.save_if_dirty()
+                    except Exception:
+                        pass
                 q = [cv2.IMWRITE_JPEG_QUALITY, int(rt.get("jpeg_quality") or 80)]
                 if vis.shape[1] > self.PREVIEW_MAX_W:   # cheap JPEG; OSC is not on this thread
                     s = self.PREVIEW_MAX_W / vis.shape[1]
                     vis = cv2.resize(vis, (self.PREVIEW_MAX_W, int(vis.shape[0] * s)),
                                      interpolation=cv2.INTER_AREA)
                 jo = cv2.imencode(".jpg", vis, q)[1].tobytes()
+                idfix = self.idfix_state()       # takes self.lock: not inside it
                 with self.lock:
                     self.frames["overlay"] = jo
                     self.frame_no += 1
                     self.results = {
-                        "objects": [object_json(o, self._last_node_t.get(o.track_id, 0.0))
+                        "objects": [object_json(o, self._last_node_t.get(o.track_id, 0.0),
+                                                osc_xy(o.cx, o.cy, roi_px, W, H))
                                     for o in objs],
                         "tuio_fps": round(self.tuio.fps, 1) if self.tuio else 0.0,
                         "size": [W, H],
@@ -665,6 +989,8 @@ class ExhibitPipeline(threading.Thread):
                         "osc": osc_log,
                         "osc_fps": 0.0 if stale else round(self.osc_fps, 1),
                         "osc_msgs": len(osc_log),
+                        "idfix": idfix,
+                        "lift_cut": getattr(getattr(self, "_motion", None), "cut_count", 0),
                         "error": st.get("error"),
                     }
             except Exception as exc:
@@ -730,33 +1056,52 @@ class ExhibitPipeline(threading.Thread):
             self._log_last_t = now0
         log = [] if want_log else None
 
-        def norm(v, origin, span):   # clamp so receivers always get 0..1
-            return round(max(0.0, min(1.0, (v - origin) / span)), 4)
-
         from pythonosc.osc_bundle_builder import OscBundleBuilder, IMMEDIATELY
         from pythonosc.osc_message_builder import OscMessageBuilder
         rows = []
         for o, t in zip(known, node_t):
             rows.append([int(o.code_id), id_bits(o.code_id),
-                  norm(o.cx, ox, rw), norm(o.cy, oy, rh),
+                  *osc_xy(o.cx, o.cy, roi_px, w, h),
                   round(float(o.angle), 2), t, self._ritual.pairs[o.code_id],
                   self._ritual.heartbeat])
+        # id -> normalized (x, y), for the TD pairXn / pairYn fields
+        pair_xy = {r[0]: (r[2], r[3]) for r in rows}
         for target in targets:
             client = self._osc_clients[(target["host"], target["port"])]
             try:
                 if target["format"] == "td":
+                    # one heartbeat per bundle (network-flow indicator), sent
+                    # even with no objects; per-object fields use slots 0..N-1
+                    # count = objects on the table now (= slots 0..count-1 below)
                     bundle = OscBundleBuilder(IMMEDIATELY)
-                    for index, values in enumerate(rows, 1):
+                    for name, value in (("heartbeat", self._ritual.heartbeat),
+                                        ("count", len(rows))):
+                        addr = f"{prefix}/{name}"
+                        message = OscMessageBuilder(address=addr)
+                        message.add_arg(value)
+                        bundle.add_content(message.build())
+                        if want_log:
+                            log.append([addr, osc_args_text("list", [value]), target["name"], "td"])
+                    for index, values in enumerate(rows):
+                        fields = []
                         for field, value in zip(OSC_OBJ_FIELDS, values):
-                            field = "pairID" if field == "pairId" else field
-                            addr = f"{prefix}/{field}{index}"
+                            if field == "heartbeat":
+                                continue
+                            if field == "pairId":
+                                # TD only: the pair's position as pairXn / pairYn
+                                px, py = pair_xy.get(value, (-1.0, -1.0))
+                                fields += [(f"pairID{index}", value),
+                                           (f"pairX{index}", px), (f"pairY{index}", py)]
+                            else:
+                                fields.append((f"{field}{index}", value))
+                        for name, value in fields:
+                            addr = f"{prefix}/{name}"
                             message = OscMessageBuilder(address=addr)
                             message.add_arg(value)
                             bundle.add_content(message.build())
                             if want_log:
                                 log.append([addr, osc_args_text("list", [value]), target["name"], "td"])
-                    if rows:
-                        client.send(bundle.build())
+                    client.send(bundle.build())
                 else:
                     for values in rows:
                         args = format_osc_args(target["format"], OSC_OBJ_FIELDS, values)
@@ -814,6 +1159,12 @@ class ExhibitPipeline(threading.Thread):
     def shutdown(self):
         self.running = False
         self._stop_exhibit()
+        fx = getattr(self, "_idfix", None)
+        if fx is not None:
+            try:
+                fx.model.save_if_dirty()
+            except Exception:
+                pass
 
 
 # ---------------------------------------------------------------- flask
@@ -844,12 +1195,24 @@ def make_app(pipe):
     def state():
         with pipe.lock:
             results = dict(pipe.results)
-        return jsonify({"runtime": pipe.get_rt(), "results": results,
+        pipe.camera_touch()
+        return jsonify({"camera": pipe.camera_state(),
+                        "runtime": pipe.get_rt(), "results": results,
                         "rtv": pipe.rtv_state(), "osc_fields": OSC_OBJ_FIELDS,
                         "tension_basis": pipe.tension_basis,
                         "active_name": pipe.active_name,
                         "test_mode": pipe.test_mode,
                         "virtual": pipe.virtual_state()})
+
+    @app.post("/api/idfix/reset")
+    def idfix_reset():
+        b = request.get_json(force=True) or {}
+        return jsonify(pipe.idfix_reset(learned=bool(b.get("learned"))))
+
+    @app.post("/api/idfix/pin")
+    def idfix_pin():
+        b = request.get_json(force=True) or {}
+        return jsonify(pipe.idfix_pin(b.get("track"), b.get("id", -1)))
 
     @app.post("/api/object")
     def object_api():
@@ -884,6 +1247,11 @@ def make_app(pipe):
     def roi():
         body = request.get_json(force=True) or {}
         return jsonify({"ok": True, "roi": pipe.set_roi(body.get("roi"))})
+
+    @app.post("/api/camera/borrow")
+    def camera_borrow():
+        body = request.get_json(force=True, silent=True) or {}
+        return jsonify(pipe.camera_borrow(bool(body.get("on"))))
 
     @app.post("/api/tension/measure_contact")
     def tension_measure_contact():
@@ -942,18 +1310,21 @@ def main():
                     help="reacTIVision을 자동 실행하지 않음 (수동 실행 시)")
     ap.add_argument("--test", action="store_true",
                     help="테스트: reacTIVision/TUIO 없이 가상 오브제(6각형, ID 0~24)로 동일 파이프라인 실행")
+    ap.add_argument("--tracker", choices=TRACKERS,
+                    help="마커 트래커 선택 (저장되어 다음 실행의 기본값이 됨; 생략 시 마지막 선택)")
     args = ap.parse_args()
 
     pipe = ExhibitPipeline(autostart=(False if args.no_rtv else None),
-                           exe_override=args.rtv_exe, test_mode=args.test)
+                           exe_override=args.rtv_exe, test_mode=args.test, tracker=args.tracker)
     pipe.start()
     app = make_app(pipe)
-    exe = find_exe(args.rtv_exe or pipe.get_rt().get("rtv_exe", ""))
+    engine, exe = tracker_exe(pipe.get_rt(), args.rtv_exe)
     if args.test:
         print("[exhibit] TEST MODE - reacTIVision/TUIO off, virtual objects "
               f"({TEST_OBJECTS_PATH})")
     else:
-        print(f"[exhibit] reacTIVision: {exe or 'NOT FOUND'}")
+        print(f"[exhibit] tracker: {engine} -> {exe or 'NOT FOUND'}"
+              f"{'' if args.tracker else '  (last used; change with --tracker)'}")
     print(f"[exhibit] http://localhost:{args.port}")
     try:
         app.run(host=args.host, port=args.port, threaded=True, debug=False,

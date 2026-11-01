@@ -17,7 +17,7 @@ import math
 import os
 
 from tracker.engines.base import (
-    COMMON_DEFAULTS, TrackerEngine, attr, bool_text, build_camera_xml, import_camera_xml,
+    COMMON_DEFAULTS, TrackerEngine, attr, bool_text, camera_xml_keeping_settings, import_camera_xml,
     write_files, xbool, xml_root,
 )
 from tracker.engines.reactivision import import_reactivision_xml
@@ -128,7 +128,7 @@ def import_ritualvision_xml(path):
 
 
 def write_configs(cfg, work_dir):
-    p = write_files(work_dir, {"camera.xml": build_camera_xml(cfg),
+    p = write_files(work_dir, {"camera.xml": camera_xml_keeping_settings(cfg, work_dir),
                                "reacTIVision.xml": build_app_xml(cfg)})
     p.update(write_files(work_dir, {"ritualvision.xml": build_ritualvision_xml(cfg)},
                          encoding="utf-8"))

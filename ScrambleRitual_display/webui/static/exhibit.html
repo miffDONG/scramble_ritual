@@ -192,28 +192,19 @@
           <select id="rtvFps"></select>
         </div>
       </div>
-      <p class="hint" id="modeHint">120fps는 노출(exposure)을 −7 이하(1/128초)로 두어야 실제로 나옵니다. 값이 클수록 밝지만 fps가 떨어집니다.</p>
-      <details open>
-        <summary>카메라 설정 (camera.xml)</summary>
+      <p class="hint" id="modeHint">해상도·fps는 트래커 창에 없는 설정이라 여기서 정합니다. 120fps는 노출이 1/128초 이하로 짧아야 실제로 나옵니다.</p>
+      <p class="hint"><b>밝기·노출·게인·초점 등 카메라 영상 설정은 트래커 창에서</b> 합니다 — reacTIVision은 <b>o</b> (닫을 때 camera.xml에 저장), Ritualvision은 <b>c</b>. 서버는 이 값을 바꾸지 않고 camera.xml의 값을 그대로 둡니다.</p>
+      <details>
+        <summary>영상 잘라내기 (camera.xml frame)</summary>
         <div class="body grid2">
           <div class="grid">
-            <label title="DirectShow log2 초. -6=1/64s, -7=1/128s. default/min/max 가능">exposure</label><input type="text" id="rtv_exposure">
-            <label>gain</label><input type="text" id="rtv_gain">
-            <label>brightness</label><input type="text" id="rtv_brightness">
-            <label>contrast</label><input type="text" id="rtv_contrast">
-            <label>gamma</label><input type="text" id="rtv_gamma">
+            <label title="원본 프레임 크롭 폭 (max=전체)">frame w</label><input type="text" id="rtv_frame_width">
+            <label>xoff</label><input type="number" id="rtv_xoff">
           </div>
           <div class="grid">
-            <label>sharpness</label><input type="text" id="rtv_sharpness">
-            <label title="min = 가장 가까운 초점. 카메라 거리에 맞춰 조정">focus</label><input type="text" id="rtv_focus">
-            <label>shutter</label><input type="text" id="rtv_shutter">
-            <label title="원본 프레임 크롭 폭 (max=전체)">frame w</label><input type="text" id="rtv_frame_width">
             <label title="원본 프레임 크롭 높이 (max=전체)">frame h</label><input type="text" id="rtv_frame_height">
+            <label>yoff</label><input type="number" id="rtv_yoff">
           </div>
-        </div>
-        <div class="body grid2" style="padding-top:0">
-          <div class="grid"><label>xoff</label><input type="number" id="rtv_xoff"></div>
-          <div class="grid"><label>yoff</label><input type="number" id="rtv_yoff"></div>
         </div>
       </details>
       <details open>
@@ -450,8 +441,8 @@ async function toggleInfer() {
 }
 
 /* ---------- tracker panel (reacTIVision / Ritualvision) ---------- */
-const RTV_TEXT = ['rtv_exposure','rtv_gain','rtv_brightness','rtv_contrast','rtv_gamma','rtv_sharpness',
-  'rtv_focus','rtv_shutter','rtv_frame_width','rtv_frame_height','rtv_tree','rtv_calib_file',
+// camera image settings (brightness, exposure ...) are not here: set in the tracker window
+const RTV_TEXT = ['rtv_frame_width','rtv_frame_height','rtv_tree','rtv_calib_file',
   'rtv_calib_invert','rtv_exe','rtv_display','rtv_engine','ritualvision_exe','rv_ids'];
 const RTV_NUM = ['rtv_xoff','rtv_yoff','rtv_gradient','rtv_tile','rtv_finger_size',
   'rtv_finger_sensitivity','rtv_tuio_port','rv_block','rv_offset','rv_hold'];
@@ -576,11 +567,6 @@ function collectRtv() {
     out.rtv_width = w; out.rtv_height = h; out.rtv_compress = (codec === 'MJPG');
   }
   if ($('rtvFps').value) out.rtv_fps = +$('rtvFps').value;
-  // numeric-looking camera settings go as ints, keep default/min/max as text
-  for (const k of ['rtv_exposure','rtv_gain','rtv_brightness','rtv_contrast','rtv_gamma','rtv_sharpness','rtv_focus','rtv_shutter']) {
-    const v = out[k]; if (v !== '' && !isNaN(v)) out[k] = parseInt(v, 10);
-    if (v === '') out[k] = 'default';
-  }
   return out;
 }
 async function applyRtv() {
@@ -605,8 +591,9 @@ async function rtvImport() {
 function renderRtvStatus(st) {
   const el = $('rtvStatus');
   if (!st) return;
-  const label = st.engine_label || TRACKER_LABEL[st.engine] || '트래커';
-  runEngine = st.engine || null;
+  // the running process's tracker; when nothing runs, the selected (saved) one
+  const label = (st.running ? st.engine_label : st.selected_label) || TRACKER_LABEL[st.selected] || '트래커';
+  runEngine = st.running ? st.engine : null;
   updateTrackerHint();
   const parts = [];
   const rs = st.restart || {};

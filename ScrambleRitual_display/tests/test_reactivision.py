@@ -4,6 +4,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest import mock
 
 from tracker import reactivision as R
 
@@ -96,7 +97,7 @@ class TestListParsing(unittest.TestCase):
 class TestXml(unittest.TestCase):
     def test_roundtrip(self):
         cfg = {**R.RTV_DEFAULTS, "rtv_width": 800, "rtv_height": 600, "rtv_fps": 120,
-               "rtv_exposure": -7, "rtv_gain": "max", "rtv_calib_invert": "",
+               "rtv_calib_invert": "",
                "rtv_gradient": 40, "rtv_display": "dest", "rtv_equalize": True,
                "rtv_tuio_port": 3334}
         with tempfile.TemporaryDirectory() as d:
@@ -109,13 +110,13 @@ class TestXml(unittest.TestCase):
             self.assertNotIn("<camera config", text)
             self.assertIn('invert=" "', text)          # empty -> single space
             back = R.import_xml(cam, rtv)
-        for k in ("rtv_width", "rtv_height", "rtv_fps", "rtv_exposure", "rtv_gain",
+        for k in ("rtv_width", "rtv_height", "rtv_fps",
                   "rtv_gradient", "rtv_display", "rtv_equalize", "rtv_tuio_port",
-                  "rtv_focus", "rtv_compress"):
+                  "rtv_compress"):
             self.assertEqual(back[k], cfg[k], k)
         self.assertEqual(back["rtv_calib_invert"], "")
-        self.assertIsInstance(back["rtv_exposure"], int)
         self.assertEqual(back["rtv_frame_width"], "max")
+        self.assertNotIn("rtv_exposure", back)       # camera image settings are not ours
 
     def test_import_current_files(self):
         with tempfile.TemporaryDirectory() as d:
@@ -127,7 +128,7 @@ class TestXml(unittest.TestCase):
             got = R.import_xml(cp, rp)
         self.assertEqual((got["rtv_width"], got["rtv_height"], got["rtv_fps"]), (800, 600, 60))
         self.assertTrue(got["rtv_compress"])
-        self.assertEqual(got["rtv_focus"], "min")
+        self.assertNotIn("rtv_focus", got)
         self.assertEqual((got["rtv_finger_size"], got["rtv_finger_sensitivity"]), (0, 75))
         self.assertEqual((got["rtv_gradient"], got["rtv_tile"]), (32, 10))
         self.assertEqual(got["rtv_calib_invert"], "")
@@ -137,10 +138,30 @@ class TestXml(unittest.TestCase):
         self.assertEqual(R.import_xml("Z:/nope/camera.xml", "Z:/nope/r.xml"), {})
 
     def test_camera_xml_settings_text(self):
-        x = R.build_camera_xml({"rtv_exposure": "-6", "rtv_gain": None, "rtv_focus": 12.0})
+        x = R.build_camera_xml({}, {"exposure": "-6", "gain": None, "focus": 12.0, "white": "4600"})
         self.assertIn('exposure="-6"', x)
         self.assertIn('gain="default"', x)
         self.assertIn('focus="12"', x)
+        self.assertIn('white="4600"', x)              # attributes we do not know are kept too
+        fresh = R.build_camera_xml({})
+        self.assertIn('brightness="default"', fresh)
+        self.assertIn('focus="min"', fresh)
+
+    def test_write_keeps_camera_settings_set_in_the_tracker(self):
+        """brightness etc. are set in reacTIVision ('o') and saved by it on exit: a server
+        write changes capture / frame / camera id but never <settings>."""
+        saved = CAMERA_XML.replace('brightness="default"', 'brightness="137"').replace(
+            'exposure="default"', 'exposure="-7"')
+        with tempfile.TemporaryDirectory() as d:
+            cam = os.path.join(d, "camera.xml")
+            with open(cam, "w", encoding="latin-1") as f:
+                f.write(saved)
+            R.write_configs({**R.RTV_DEFAULTS, "rtv_width": 1280, "rtv_height": 720, "rtv_fps": 60}, d)
+            with open(cam, encoding="latin-1") as f:
+                text = f.read()
+        self.assertIn('brightness="137"', text)
+        self.assertIn('exposure="-7"', text)
+        self.assertIn('width="1280" height="720" fps="60"', text)
 
 
 class TestTreeAndBackup(unittest.TestCase):
@@ -193,6 +214,42 @@ class TestStdoutParsing(unittest.TestCase):
 
 
 class TestProcess(unittest.TestCase):
+    def _fake_proc(self, exits_on_close):
+        class P:
+            pid = 4242
+            rc = None
+            def poll(self):
+                return self.rc
+            def wait(self, timeout=None):
+                if self.rc is None:
+                    import subprocess
+                    raise subprocess.TimeoutExpired("x", timeout)
+                return self.rc
+            def terminate(self):
+                self.rc = 1
+            def kill(self):
+                self.rc = 1
+        p = P()
+        def close(pid):
+            if exits_on_close:
+                p.rc = 0
+            return 1
+        return p, close
+
+    def test_stop_closes_reactivision_window_first(self):
+        """reacTIVision saves camera.xml only on a normal exit: close, then force if needed."""
+        from tracker import process as PR
+        for exits, terminated in ((True, False), (False, True)):
+            proc = R.TrackerProcess()
+            proc._close_window_first = True
+            p, close = self._fake_proc(exits)
+            proc.proc = p
+            with mock.patch.object(PR, "close_windows", side_effect=close) as cw, \
+                    mock.patch.object(PR.TrackerProcess, "CLOSE_WAIT_S", 0.01):
+                proc.stop(timeout=0.01)
+            cw.assert_called_once_with(4242)
+            self.assertEqual(p.rc, 1 if terminated else 0)
+
     def test_missing_exe_reports_error(self):
         p = R.ReactivisionProcess(exe="Z:/nope/reacTIVision.exe")
         cands = R.EXE_CANDIDATES[:]

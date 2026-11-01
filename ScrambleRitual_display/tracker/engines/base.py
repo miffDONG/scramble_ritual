@@ -6,31 +6,26 @@ same file format for reacTIVision and Ritualvision), so saved exhibit configs st
 
   camera.xml <camera id>                      rtv_camera
              <capture width height fps compress>   rtv_width rtv_height rtv_fps rtv_compress
-             <settings brightness ... focus>       rtv_brightness ... rtv_focus
              <frame width height xoff yoff>        rtv_frame_width rtv_frame_height rtv_xoff rtv_yoff
+             <settings brightness ... focus>       NOT a server setting: kept as the tracker
+                                                   left it (reacTIVision saves what its 'o'
+                                                   camera options set when it closes)
 """
 
 import os
 from xml.etree import ElementTree as ET
+from xml.sax.saxutils import quoteattr
 
 COMMON_DEFAULTS = {
     "tracker": "reactivision",   # reactivision | ritualvision (exhibition_start.bat --tracker, 마지막 선택 유지)
     "rtv_autostart": True,       # 서버 시작 시 트래커 자동 실행
     "rtv_no_window": False,      # -n : 트래커 창 없이 실행
-    # camera.xml
+    # camera.xml (밝기·노출 등 <settings>는 트래커 창에서 정함 — 서버는 그대로 둠)
     "rtv_camera": 0,
     "rtv_width": 0,              # 0 = 자동 (MJPG·120fps 가능한 최대 해상도)
     "rtv_height": 0,
     "rtv_fps": 120,
     "rtv_compress": True,        # true = MJPG, false = YUY2(비압축)
-    "rtv_brightness": "default", # default | min | max | 정수
-    "rtv_contrast": "default",
-    "rtv_gain": "default",
-    "rtv_shutter": "default",
-    "rtv_exposure": "default",   # DirectShow log2 초. 120fps는 -7(1/128s) 이하
-    "rtv_sharpness": "default",
-    "rtv_gamma": "default",
-    "rtv_focus": "min",
     "rtv_frame_width": "max",    # 원본 프레임 크롭 (max = 전체)
     "rtv_frame_height": "max",
     "rtv_xoff": 0,
@@ -46,6 +41,8 @@ COMMON_DEFAULTS = {
 
 SETTING_KEYS = ("brightness", "contrast", "gain", "shutter", "exposure",
                 "sharpness", "gamma", "focus")
+#: <settings> for a camera.xml that does not exist yet (the distribution's values)
+DEFAULT_CAMERA_SETTINGS = {**{k: "default" for k in SETTING_KEYS}, "focus": "min"}
 
 
 # ---------------------------------------------------------------- camera modes
@@ -148,9 +145,22 @@ def xml_root(path):
         return None
 
 
-def build_camera_xml(cfg):
+def read_camera_settings(camera_xml_path):
+    """The <settings> attributes of an existing camera.xml, as written (e.g. what
+    reacTIVision saved from its 'o' camera options); {} when there is none."""
+    root = xml_root(camera_xml_path) if camera_xml_path and os.path.isfile(camera_xml_path) else None
+    cam = root.find("camera") if root is not None else None
+    st = cam.find("settings") if cam is not None else None
+    return dict(st.attrib) if st is not None else {}
+
+
+def build_camera_xml(cfg, settings=None):
+    """camera.xml text. `settings`: the <settings> attributes to keep (from the existing
+    file); None -> DEFAULT_CAMERA_SETTINGS. The server never chooses these values."""
     c = {**COMMON_DEFAULTS, **cfg}
-    settings = " ".join(f'{k}="{setting_text(c["rtv_" + k])}"' for k in SETTING_KEYS)
+    st = dict(settings) if settings else dict(DEFAULT_CAMERA_SETTINGS)
+    keys = [k for k in SETTING_KEYS if k in st] + [k for k in st if k not in SETTING_KEYS]
+    settings = " ".join(f'{k}={quoteattr(setting_text(st[k]))}' for k in keys)
     return (
         '<?xml version="1.0" encoding="ISO-8859-1" ?>\n'
         '<portvideo>\n'
@@ -164,6 +174,11 @@ def build_camera_xml(cfg):
         '    </camera>\n'
         '</portvideo>\n'
     )
+
+
+def camera_xml_keeping_settings(cfg, work_dir):
+    """camera.xml for `cfg` that keeps the <settings> of the camera.xml already in work_dir."""
+    return build_camera_xml(cfg, read_camera_settings(os.path.join(work_dir, "camera.xml")))
 
 
 def import_camera_xml(camera_xml_path):
@@ -182,11 +197,6 @@ def import_camera_xml(camera_xml_path):
         v = attr(cap, a, conv)
         if v is not None:
             out[k] = v
-    st = cam.find("settings")
-    for k in SETTING_KEYS:
-        v = attr(st, k, int_or_str)
-        if v is not None:
-            out["rtv_" + k] = v
     fr = cam.find("frame")
     for k, a, conv in (("rtv_frame_width", "width", int_or_str),
                        ("rtv_frame_height", "height", int_or_str),
@@ -237,6 +247,9 @@ class TrackerEngine:
     fields = ()
     #: one-file bundles (PyInstaller) run as launcher + child: stop the whole tree
     kill_tree = False
+    #: close the window first (as if the user closed it) so the program saves its own
+    #: settings — reacTIVision writes camera.xml / reacTIVision.xml only on a normal exit
+    close_window_first = False
 
     def find_exe(self, cfg, override=""):
         raise NotImplementedError

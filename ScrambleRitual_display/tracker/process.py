@@ -42,8 +42,35 @@ def kill_tree(pid):
                        creationflags=no_window_flags())
 
 
+def close_windows(pid):
+    """Post WM_CLOSE to the visible windows of process `pid` (Windows only), as if the user
+    closed them: reacTIVision then exits normally and saves its settings. Returns the
+    number of windows asked to close (0 with -n, which has no window)."""
+    if os.name != "nt":
+        return 0
+    import ctypes
+    from ctypes import wintypes
+    user32 = ctypes.windll.user32
+    found = []
+
+    @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    def each(hwnd, _):
+        owner = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(owner))
+        if owner.value == pid and user32.IsWindowVisible(hwnd):
+            found.append(hwnd)
+        return True
+
+    user32.EnumWindows(each, 0)
+    for hwnd in found:
+        user32.PostMessageW(hwnd, 0x0010, 0, 0)          # WM_CLOSE
+    return len(found)
+
+
 class TrackerProcess:
     """Owns one tracker child process."""
+
+    CLOSE_WAIT_S = 3.0         # normal exit (settings saved) before it is forced
 
     def __init__(self, exe="", work_dir=None):
         self._lock = threading.RLock()
@@ -59,6 +86,7 @@ class TrackerProcess:
         self.engine = "reactivision"
         self.engine_label = "reacTIVision"
         self._kill_tree = False
+        self._close_window_first = False
         self.xml = {}
         self.started_at = None
         self._reader = None
@@ -80,6 +108,7 @@ class TrackerProcess:
             self.camera_name = ""
             eng = get_engine(cfg)
             self.engine, self.engine_label, self._kill_tree = eng.name, eng.label, eng.kill_tree
+            self._close_window_first = eng.close_window_first
             exe = eng.find_exe(cfg, self.exe_override)
             if not exe:
                 self.error = eng.missing_exe_message()
@@ -132,6 +161,15 @@ class TrackerProcess:
         if p is None:
             return
         try:
+            if p.poll() is None and self._close_window_first:
+                try:
+                    if close_windows(p.pid):
+                        p.wait(self.CLOSE_WAIT_S)
+                        self._log("closed normally (settings saved by the tracker)")
+                except subprocess.TimeoutExpired:
+                    self._log("did not close in time; forcing")
+                except Exception as exc:
+                    self._log(f"close error: {exc}")
             if p.poll() is None and self._kill_tree:
                 kill_tree(p.pid)
                 p.wait(timeout)

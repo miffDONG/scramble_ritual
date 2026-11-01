@@ -25,7 +25,7 @@ import time
 from xml.sax.saxutils import quoteattr
 
 from tracker.engines.base import (
-    COMMON_DEFAULTS, TrackerEngine, attr, bool_text, build_camera_xml, import_camera_xml,
+    COMMON_DEFAULTS, TrackerEngine, attr, bool_text, camera_xml_keeping_settings, import_camera_xml,
     int_or_str, original_xml_path, setting_text, write_files, xbool, xml_root,
 )
 
@@ -288,8 +288,9 @@ def import_xml(camera_xml_path, rtv_xml_path):
 
 def write_configs(cfg, work_dir):
     """Write camera.xml + reacTIVision.xml for `cfg` into work_dir (normally
-    the exe folder). Returns the two absolute paths."""
-    p = write_files(work_dir, {"camera.xml": build_camera_xml(cfg),
+    the exe folder). camera.xml keeps its <settings> (brightness, exposure ...): those are
+    set in reacTIVision itself ('o') and saved by it on exit. Returns the two paths."""
+    p = write_files(work_dir, {"camera.xml": camera_xml_keeping_settings(cfg, work_dir),
                                "reacTIVision.xml": build_reactivision_xml(cfg)})
     return p["camera.xml"], p["reacTIVision.xml"]
 
@@ -298,6 +299,7 @@ class ReactivisionEngine(TrackerEngine):
     name = "reactivision"
     label = "reacTIVision"
     fields = tuple(RTV_ONLY_DEFAULTS)
+    close_window_first = True     # so it saves its 'o' camera options before it is stopped
 
     def find_exe(self, cfg, override=""):
         return find_exe(cfg.get("rtv_exe") or override)

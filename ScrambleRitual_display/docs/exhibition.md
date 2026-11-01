@@ -60,7 +60,7 @@ webui/exhibit_server.py  (Flask, http://localhost:8765, UI = static/exhibit.html
 | `<capture>` | width / height | `rtv_width` / `rtv_height` | 0 (자동) | 해상도 |
 | | fps | `rtv_fps` | 120 | fps |
 | | compress | `rtv_compress` | true (MJPG) | 해상도의 코덱 |
-| `<settings>` | brightness … focus | `rtv_brightness` … `rtv_focus` | default (focus=min) | 카메라 설정 |
+| `<settings>` | brightness … focus | (없음 — 서버가 바꾸지 않음) | 파일에 있는 값 유지. 새 파일이면 default (focus=min) | 트래커 창: reacTIVision **o** (닫을 때 camera.xml에 저장), Ritualvision **c** |
 | `<frame>` | width / height / xoff / yoff | `rtv_frame_*`, `rtv_xoff`, `rtv_yoff` | max / 0 | frame w·h, xoff, yoff |
 | reacTIVision.xml `<tuio>` | port | `rtv_tuio_port` | 3333 | TUIO port |
 | `<finger>` | size / sensitivity | `rtv_finger_size` / `rtv_finger_sensitivity` | 0 / 75 | finger |
@@ -73,8 +73,13 @@ webui/exhibit_server.py  (Flask, http://localhost:8765, UI = static/exhibit.html
 | (파이프라인) | | `rtv_angle_offset` | 0 | tilt 0° 보정(도) |
 | (파이프라인) | | `rtv_stale_s` | 1.0 | TUIO 끊김 판정 시간 |
 
-생성 파일 위치: `C:\Users\baksh\scramble_ritual\reactivision\camera.xml`, `C:\Users\baksh\scramble_ritual\reactivision\reacTIVision.xml` — **exe 폴더 안**. 서버가 매 시작마다 덮어쓰고,
+생성 파일 위치: `C:\Users\baksh\scramble_ritual\reactivision\camera.xml`, `C:\Users\baksh\scramble_ritual\reactivision\reacTIVision.xml` — **exe 폴더 안**. 서버가 트래커를 (재)시작할 때마다 덮어쓰고,
 배포판 원본은 처음 한 번 `camera.xml.orig` / `reacTIVision.xml.orig`로 보관한다.
+
+예외: camera.xml의 `<settings>`(밝기·노출·게인·초점 등)는 덮어쓰지 않고 파일에 있던 값을 그대로 둔다. 이 값은
+reacTIVision 창에서 **o**로 정하고, reacTIVision이 정상 종료할 때 camera.xml에 저장한다. 그래서 서버는
+reacTIVision을 멈출 때 먼저 창을 닫아(정상 종료, 최대 3초) 저장할 시간을 주고, 그래도 안 꺼지면 강제 종료한다.
+`-n`(창 없음)으로 실행 중이면 닫을 창이 없어 바로 강제 종료되므로 그동안 바꾼 값은 저장되지 않는다.
 
 > 왜 exe 폴더인가: reacTIVision 1.5.1은 `<camera config="…">` 태그가 있으면(절대·상대 경로 무관) camera.xml을
 > 열지 못하고, `-c`로 다른 폴더의 설정을 주면 tree 파일도 못 찾는다. 태그 없이 자기 폴더의 `camera.xml`을 읽게 하는

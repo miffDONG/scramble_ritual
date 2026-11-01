@@ -264,12 +264,15 @@ def draw_exhibit_overlay(W, H, objs, graph, rtv_status, tuio_fps, roi_px, rt,
         draw_tension_graph(vis, graph)
     st = rtv_status or {}
     run = "RUN" if st.get("running") else "STOP"
+    # the running process's tracker, else the selected one
+    name = (st.get("engine_label") if st.get("running") else None) or \
+        get_engine(rt).label
     if camera is not None:
-        hud = f"CAMERA (ROI setup) {W}x{H} - reacTIVision paused, OSC idle"
+        hud = f"CAMERA (ROI setup) {W}x{H} - {name} paused, OSC idle"
     elif test_mode:
-        hud = f"TEST (virtual, no reacTIVision) {W}x{H} frames={tuio_fps:.0f}fps objs={len(objs)}"
+        hud = f"TEST (virtual, no tracker) {W}x{H} frames={tuio_fps:.0f}fps objs={len(objs)}"
     else:
-        hud = (f"reacTIVision {run} pid={st.get('pid') or '-'} {st.get('format') or '-'} "
+        hud = (f"{name} {run} pid={st.get('pid') or '-'} {st.get('format') or '-'} "
                f"tuio={tuio_fps:.0f}fps objs={len(objs)} "
                + ("IDFIX ON" if rt.get("idfix_enabled") else "IDFIX OFF (raw ids)"))
     cv2.putText(vis, hud, (10, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.6,

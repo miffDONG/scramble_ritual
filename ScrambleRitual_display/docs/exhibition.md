@@ -60,7 +60,7 @@ webui/exhibit_server.py  (Flask, http://localhost:8765, UI = static/exhibit.html
 | `<capture>` | width / height | `rtv_width` / `rtv_height` | 0 (자동) | 해상도 |
 | | fps | `rtv_fps` | 120 | fps |
 | | compress | `rtv_compress` | true (MJPG) | 해상도의 코덱 |
-| `<settings>` | brightness … focus | (없음 — 서버가 바꾸지 않음) | 파일에 있는 값 유지. 새 파일이면 default (focus=min) | 트래커 창: reacTIVision **o** (닫을 때 camera.xml에 저장), Ritualvision **c** |
+| `<settings>` | brightness … focus | (없음 — 서버가 바꾸지 않음) | 파일에 있는 값 유지. 새 파일이면 default (focus=min) | 트래커 창의 **o** (reacTIVision은 닫을 때 camera.xml에 저장) |
 | `<frame>` | width / height / xoff / yoff | `rtv_frame_*`, `rtv_xoff`, `rtv_yoff` | max / 0 | frame w·h, xoff, yoff |
 | reacTIVision.xml `<tuio>` | port | `rtv_tuio_port` | 3333 | TUIO port |
 | `<finger>` | size / sensitivity | `rtv_finger_size` / `rtv_finger_sensitivity` | 0 / 75 | finger |

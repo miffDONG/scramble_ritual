@@ -19,9 +19,11 @@ GREY = (150, 150, 150)
 
 TILE_PER_RC = 1.0 / (0.76 * 2 / math.sqrt(3))     # tile vertex radius / fold arm length
 
-HELP = ["t / Tab  line mask <-> camera   (1 camera, 2 mask)", "[ ]  offset -/+  (line threshold)",
-        ", .  window -/+  (threshold size)", "r  minimum size: on (register) / off",
-        "c  camera driver settings", "F12  save snapshot", "p  pause", "h  help", "q / Esc  quit"]
+# reacTIVision's keys (same letters, same meaning) + F12 snapshot
+HELP = ["s  source image", "t  target image (line mask)", "n  no image",
+        "g  threshold: offset (up/down) / window (left/right)", "o  camera options",
+        "e  toggle frame equalizer", "p  pause processing", "v  verbose output (console)",
+        "F1  toggle fullscreen", "F12  save snapshot", "h  toggle help text", "ESC  quit"]
 
 
 def _hexagon(cx, cy, radius, first_vertex_deg):
@@ -71,13 +73,27 @@ def draw(frame, mask, markers, show_mask, fps, offset, show_help, msg="", block=
         _label(img, f"{''.join(map(str, m.code))}  {m.angle:5.1f}deg  fold {m.arm_angle:5.1f}",
                (cx - 85, int(cy + m.size * TILE_PER_RC + 18)), 0.48, col, 1)
     found = sum(1 for m in markers if m.fid >= 0)
-    view = "mask" if (show_mask and mask is not None) else "camera"
+    view = "target" if (show_mask and mask is not None) else "source"
     status = f"{fps:5.1f} fps  markers {found}  offset {offset:.0f}  window {block}  [{view}]  {size_state}"
     if noise:
-        status += f"  noise {noise}"
-    _label(img, status, (10, 24), 0.6, WHITE, 1)
+        status += f"  dropped {noise}"
+    _texts(img, status, show_help, msg, overlay_lines)
+    return img
+
+
+def no_image(fps, markers, show_help, msg="", overlay_lines=()):
+    """n: no camera image (as reacTIVision's display off), only the status text."""
+    img = np.zeros((300 if show_help or overlay_lines else 90, 640, 3), np.uint8)
+    found = sum(1 for m in markers if m.fid >= 0)
+    _texts(img, f"{fps:5.1f} fps  markers {found}  [no image]  s source / t target",
+           show_help, msg, overlay_lines)
+    return img
+
+
+def _texts(img, status, show_help, msg, overlay_lines):
+    _label(img, status + ("" if show_help else "   h: help"), (10, 24), 0.6, WHITE, 1)
     y = 50
-    for line in overlay_lines:                          # registration prompt etc.
+    for line in overlay_lines:                          # g threshold settings
         _label(img, line, (10, y), 0.7, AMBER, 2)
         y += 28
     if msg:
@@ -87,4 +103,3 @@ def draw(frame, mask, markers, show_mask, fps, offset, show_help, msg="", block=
         for line in HELP:
             _label(img, line, (10, y), 0.5, WHITE, 1)
             y += 20
-    return img

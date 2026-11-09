@@ -147,12 +147,12 @@
   <div id="monitor">
     <div class="card" id="view">
       <div class="tabs" id="viewTabs">
-        <button data-view="compare" class="active" title="같은 프레임을 좌=원본 / 우=전처리로 갈라서 같은 배율로 비교">원본 | 전처리</button>
+        <button data-view="compare" title="같은 프레임을 좌=원본 / 우=전처리로 갈라서 같은 배율로 비교">원본 | 전처리</button>
         <button data-view="enhanced" title="전처리가 끝난 grayscale 전체">대비 강화</button>
         <button data-view="extract" title="고른 추출 방식이 각 blob을 선(1)/점(0) 중 무엇으로 판정했는지 영상 위에 표시">추출 진단</button>
         <button data-view="lines" title="선으로 분류된 픽셀을 영상 위에 자홍색으로 표시">선 후보</button>
         <button data-view="dots" title="선을 뺀 나머지(점 후보)를 영상 위에 초록색으로 표시">점 후보</button>
-        <button data-view="overlay" title="최종 glyph·체인·ID 판독 결과">오버레이</button>
+        <button data-view="overlay" class="active" title="최종 glyph·체인·ID 판독 결과">오버레이</button>
         <button data-view="mask" title="이진화 직후 후보 마스크(순수 흑백)">마스크</button>
         <button data-view="raw" title="입력 프레임 원본">원본</button>
       </div>
@@ -187,7 +187,7 @@
         <span class="badge info" id="tmplBadge">템플릿 -</span>
       </div>
       <div class="viewbox">
-        <img id="stream" src="/stream/compare" alt="stream">
+        <img id="stream" src="/stream/overlay" alt="stream">
         <div id="roiLayer"></div>
         <div id="roiRect"></div>
         <div id="objLayer"></div>
@@ -1367,7 +1367,7 @@ document.getElementById('compareSplit').addEventListener('input', e => {
   const cs = st.runtime.compare_split ?? 0.5;
   document.getElementById('compareSplit').value = cs;
   document.getElementById('compareSplitVal').textContent = Math.round(cs * 100) + '%';
-  selectView('compare');
+  selectView('overlay');
   buildAxes(st.cfg);
   syncAxes(st.cfg);
   loadConfigs();

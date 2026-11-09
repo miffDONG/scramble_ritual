@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="ISO-8859-1" ?>
+<reactivision>
+    <tuio host="127.0.0.1" port="3333" />
+    <image display="src" equalize="false" fullscreen="false" />
+</reactivision>

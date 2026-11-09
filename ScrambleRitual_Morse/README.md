@@ -37,7 +37,15 @@ py -3 -m venv .venv
 
 macOS/Linux: `python3 -m venv .venv && .venv/bin/pip install -r requirements.txt`
 
-`scripts\start.bat`을 처음 실행하면 위 과정을 자동으로 수행한다.
+Windows는 `scripts\start.bat`, macOS는 `scripts/start.command`를 처음 실행하면
+위 과정을 자동으로 수행한다. mac 런처는 Apple Silicon(arm64) / Intel(x86_64)을
+먼저 확인해서 그 아키텍처용 Python 3를 고르고(없으면 해당 prefix의 Homebrew로
+`python@3.12` 설치), Rosetta로 실행된 경우 arm64로 다시 띄운 뒤 venv를 만든다.
+zip으로 받은 사본은 실행 권한이 날아갈 수 있으니 최초 1회만:
+
+```bash
+chmod +x scripts/start.command
+```
 
 ## Web Tuner (현장 실시간 튜닝)
 
@@ -50,6 +58,21 @@ scripts\start.bat --sim           :: 합성 카드 씬으로 시작
 scripts\start.bat --camera 0      :: 카메라 0으로 시작
 scripts\start.bat --video ..\sampleVideo\morseCode.MOV
 ```
+
+macOS는 같은 인자를 그대로 쓴다 (Finder에서 `start.command` 더블클릭도 동일):
+
+```bash
+./scripts/start.command                    # 오브제 테이블(사운드)로 시작
+./scripts/start.command --sim              # 합성 카드 씬으로 시작
+./scripts/start.command --camera 0         # 카메라 0으로 시작
+./scripts/start.command --video ../sampleVideo/morseCode.MOV
+```
+
+mac에서 처음 카메라를 열면 터미널에 카메라 권한 프롬프트가 뜬다. 거부하면
+검은 화면만 들어오므로 시스템 설정 > 개인정보 보호 및 보안 > 카메라에서 켠다.
+Windows에서 만든 `.venv`(`Scripts\`)가 폴더에 그대로 있으면 건드리지 않고
+`.venv-mac`을 따로 만들어 쓴다. `sounddevice`용 PortAudio가 없으면 경고만
+남기고 웹 튜너는 그대로 뜬다 (`brew install portaudio` 후 재실행).
 
 실행하면 http://localhost:8765 가 자동으로 열린다. 수동 실행은:
 

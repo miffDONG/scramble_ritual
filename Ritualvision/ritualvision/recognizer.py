@@ -86,9 +86,10 @@ class Recognizer:
         # drop isolated sensor specks (far fewer components to label): a line pixel needs at
         # least 2 dark neighbours. Unlike a blur or median it neither fills dash gaps nor
         # thins 2 px lines.
-        nb = cv2.boxFilter((m > 0).astype(np.uint8), cv2.CV_8U, (3, 3), normalize=False)
-        m[nb < 3] = 0
-        return m
+        # (on the 0/255 mask the 3x3 mean is 85 x the dark-pixel count / 3: >= 3 pixels <=> >= 80)
+        nb = cv2.boxFilter(m, -1, (3, 3))
+        _, keep = cv2.threshold(nb, 79, 255, cv2.THRESH_BINARY)
+        return cv2.bitwise_and(m, keep)
 
     # --------------------------------------------------------------- per frame
     def process(self, frame):
@@ -105,12 +106,12 @@ class Recognizer:
         cand = np.flatnonzero((comps["area"] >= 20) & (diag >= self.min_arm * 1.4) & (diag <= self.max_arm * 2.2)
                               & (comps["area"] <= 0.2 * diag * diag))
         anchors = []
-        for j in cand:
-            i, x, y, w, h = (int(comps[k][j]) for k in ("i", "x", "y", "w", "h"))
+        boxes = np.column_stack([comps[k][cand] for k in ("i", "x", "y", "w", "h")]).tolist()
+        for i, x, y, w, h in boxes:
             sub = labels[y:y + h, x:x + w] == i
             # two equal arms at 120 deg have a variance ratio (major / minor axis) of about 12;
             # a dash long enough to get here is above 100, a blob near 1: skip both early
-            mo = cv2.moments(sub.astype(np.uint8), binaryImage=True)
+            mo = cv2.moments(sub.view(np.uint8), binaryImage=True)
             a20, a02, a11 = mo["mu20"], mo["mu02"], mo["mu11"]
             common = math.sqrt(4 * a11 * a11 + (a20 - a02) ** 2)
             l1, l2 = a20 + a02 + common, a20 + a02 - common

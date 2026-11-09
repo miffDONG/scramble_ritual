@@ -27,6 +27,7 @@ def bundled(name):
 @dataclass
 class CameraConfig:
     camera_id: int = 0
+    driver: str = "auto"            # auto | opencv | ocam (camera.py)
     width: int = 1280
     height: int = 800
     fps: int = 60
@@ -88,6 +89,7 @@ def load_camera(path):
     if cam is None:
         return cfg
     cfg.camera_id = _int(cam.get("id"), 0)
+    cfg.driver = (cam.get("driver") or "auto").strip().lower()
     cap = cam.find("capture")
     if cap is not None:
         cfg.width = _int(cap.get("width"), cfg.width)

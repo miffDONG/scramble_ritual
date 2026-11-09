@@ -10,6 +10,19 @@ reacTIVision을 복제한 구조에서 **마커 인식 & 분류부만 교체한*
    - 이어서 미리보기 창이 열립니다. 인식된 마커에는 초록 접힌 선, 주황 대시 점, ID 숫자, 방향 화살표가 그려집니다.
 3. 카메라 번호가 0이 아니면 `camera.xml`의 `<camera id="0">`를 바꾸거나, 명령줄에서 `Ritualvision.exe --camera 1`로 실행합니다.
 
+### oCam (Withrobot) 카메라
+
+흑백 oCam(oCam-1MGN-U-T2 등)은 Y800(GREY) 형식만 내보내서 OpenCV와 reacTIVision으로는 열리지 않습니다. Ritualvision은 이런 카메라를 제조사 SDK(`libCamCap-x64.dll`, exe 안에 포함)로 엽니다. 일반 웹캠은 지금처럼 OpenCV로 엽니다.
+
+- `camera.xml`의 `<camera driver="...">`(또는 `--driver`)로 경로를 고릅니다.
+  - `auto`(기본값, 속성이 없을 때도): OpenCV로 먼저 열고, 프레임이 오지 않으면 oCam SDK로 넘어갑니다. 넘어가는 데 몇 초 걸립니다.
+  - `opencv`: OpenCV만 씁니다.
+  - `ocam`: oCam SDK만 씁니다. 이때 `id`는 oCam 번호이고, 번호가 없으면 0번을 씁니다.
+- 지원 모드는 1280x800·1280x720 60fps, 640x480 100fps, 320x240 180fps입니다(`reacTIVision.exe -l` 또는 oCamViewer에서 확인).
+- `<settings>`에서 oCam이 받는 값은 `brightness`(0–255)와 `exposure`·`shutter`(-13–-3)입니다. 나머지는 무시하고 로그에 적습니다. 노출 값은 2의 거듭제곱 초입니다(-8 = 1/256초, -3 = 1/8초). 노출이 한 프레임보다 길면 fps가 떨어지므로(-3이면 약 9fps), Ritualvision은 시작할 때 노출을 `<capture fps>`에 맞는 값 이하로 제한합니다(60fps → 최대 -6 = 1/64초). 슬라이더도 그 이상으로는 움직이지 않습니다. `default`는 카메라에 남은 값을 그대로 두므로 다른 프로그램에서 바꾼 값이 이어집니다(공장값: 밝기 64, 노출 -8).
+- 미리보기에서 `o`를 누르면 밝기·노출 슬라이더 창이 열립니다. 바로 적용되고, 콘솔에 `camera.xml`에 적을 값이 출력됩니다. 다시 `o`를 누르면 닫힙니다.
+- oCamViewer가 카메라를 잡고 있으면 열 수 없으니 먼저 닫으세요.
+
 ### 미리보기 창 단축키
 
 reacTIVision 1.5.1의 키를 그대로 옮겼습니다(같은 키, 같은 뜻). 그 외에는 마커 표시 켜기/끄기(`m`)만 있습니다. 글자 키는 Caps Lock·한글 입력 상태에서도 동작합니다.
@@ -44,6 +57,7 @@ Ritualvision.exe                     카메라 + 미리보기 창 + TUIO
 Ritualvision.exe -n                  창 없이 (reacTIVision -n과 같음)
 Ritualvision.exe --list-cameras      카메라 번호 확인
 Ritualvision.exe --camera 1          camera.xml 대신 1번 카메라
+Ritualvision.exe --driver ocam       oCam SDK로 열기 (auto | opencv | ocam)
 Ritualvision.exe --port 3334         TUIO 포트 변경
 Ritualvision.exe --source 사진.png   카메라 대신 이미지/영상 파일
 Ritualvision.exe --source 사진.png --once   한 장 인식 결과를 JSON으로 출력하고 종료
@@ -51,7 +65,7 @@ Ritualvision.exe --source 사진.png --once   한 장 인식 결과를 JSON으�
 
 ## 설정 파일 (exe 옆)
 
-- `camera.xml`: reacTIVision과 같은 형식. `<camera id>`, `<capture width height fps compress>`, `<settings brightness gain exposure focus …>`, `<frame …>`(ROI).
+- `camera.xml`: reacTIVision과 같은 형식. `<camera id driver>`(driver는 Ritualvision 전용), `<capture width height fps compress>`, `<settings brightness gain exposure focus …>`, `<frame …>`(ROI).
 - `reacTIVision.xml`: `<tuio host port>`, `<image display>`. 전시 서버가 웹 UI 설정으로 다시 씁니다.
 - `ritualvision.xml`: Ritualvision 전용 `<recognizer block offset invert hold ids>`. reacTIVision.xml 다음에 읽으므로 서버가 덮어써도 유지됩니다.
 - `ids.json`: ID ↔ 대시 조합 표 (UR, R, LR, LL). 25개 마커와 같은 순서.
@@ -61,7 +75,8 @@ Ritualvision.exe --source 사진.png --once   한 장 인식 결과를 JSON으�
 
 | 모듈 | 파일 | 역할 |
 |---|---|---|
-| 카메라 리소스 연결부 | `ritualvision/camera.py` | DirectShow(→ Media Foundation) 카메라 열기, 별도 스레드로 최신 프레임 유지, 이미지/영상 파일 소스 |
+| 카메라 리소스 연결부 | `ritualvision/camera.py` | DirectShow(→ Media Foundation) 카메라 열기, 프레임이 안 오면 oCam SDK로 전환, 별도 스레드로 최신 프레임 유지, 이미지/영상 파일 소스 |
+| oCam 연결부 | `ritualvision/ocam.py` | Withrobot libCamCap SDK(ctypes)로 oCam 열기, GREY/YUYV → BGR, 밝기·노출 설정 |
 | 카메라 옵션 설정부 | `ritualvision/camera_options.py` | camera.xml 설정 적용, ROI 자르기 |
 | 마커 패턴 인식 & 분류부 | `ritualvision/recognizer.py` | 국소 임계값 → 영역 분리 → 접힌 선 검출(중심·크기·대략 방향) → 대시 축으로 정밀 각도 → 변별 대시 수 → ID |
 | 추적 | `ritualvision/tracker.py` | 세션 ID, 속도, 놓친 프레임 유지(hold) |

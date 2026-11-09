@@ -2,6 +2,12 @@
 
 Opens a camera (DirectShow on Windows, like reacTIVision) or an image / video file, and grabs
 frames on a background thread so the recognizer always works on the newest frame.
+
+camera.xml <camera driver="...">, or --driver:
+  auto    (default, also when the attribute is missing) OpenCV first; when that camera gives no
+          frame, a Withrobot oCam through its own SDK (ocam.py). Mono oCams need this.
+  opencv  DirectShow / Media Foundation only
+  ocam    oCam SDK only; <camera id> is then the oCam index
 """
 
 import os
@@ -10,6 +16,8 @@ import threading
 import time
 
 import cv2
+
+from . import camera_options, ocam
 
 
 def _backends():
@@ -21,8 +29,10 @@ def _backends():
 
 
 def list_cameras(max_index=6):
-    """Probe camera indexes; returns [(index, backend, width, height)]."""
+    """Probe camera indexes; returns [(index, backend, width, height)] for OpenCV cameras that
+    give a frame, then [(index, "oCam SDK", model, usb)] for the connected oCams."""
     found = []
+    _quiet_opencv()
     for i in range(max_index):
         for api in _backends():
             cap = cv2.VideoCapture(i, api)
@@ -33,7 +43,44 @@ def list_cameras(max_index=6):
                 cap.release()
                 break
             cap.release()
+    found += [(i, "oCam SDK", model, usb) for i, model, usb in ocam.list_ocams()]
     return found
+
+
+def _quiet_opencv():
+    # Media Foundation logs a warning per failed grab while probing a GREY-only camera
+    try:
+        cv2.utils.logging.setLogLevel(cv2.utils.logging.LOG_LEVEL_ERROR)
+    except AttributeError:
+        pass
+
+
+def open_camera(cfg, log=print):
+    """A started-ready camera source for camera.xml (cfg.driver: auto | opencv | ocam)."""
+    driver = (cfg.driver or "auto").lower()
+    errors = []
+    if driver in ("auto", "opencv"):
+        src = CameraSource(cfg)
+        try:
+            src.open()
+            if driver == "opencv" or src.probe_frame():
+                return src
+            errors.append(f"camera {cfg.camera_id} ({src.backend}) opened but gave no frame")
+            src.stop()
+        except RuntimeError as e:
+            errors.append(str(e))
+        if driver == "opencv":
+            raise RuntimeError("; ".join(errors))
+    n = ocam.count()
+    if n == 0:
+        why = ocam.dll_error() or "no oCam connected"
+        raise RuntimeError("; ".join(errors + [f"oCam SDK: {why}"]))
+    idx = cfg.camera_id if cfg.camera_id < n else 0
+    if driver == "auto":
+        log(f"  camera  {'; '.join(errors)} -> oCam SDK, oCam {idx}")
+    elif idx != cfg.camera_id:
+        log(f"  camera  oCam {cfg.camera_id} not connected ({n} found), using oCam {idx}")
+    return ocam.OCamSource(cfg, idx).open()
 
 
 class Source:
@@ -72,14 +119,30 @@ class CameraSource(Source):
             cap.release()
         if cap is None or not cap.isOpened():
             raise RuntimeError(f"camera {self.cfg.camera_id} could not be opened")
-        if self.cfg.compress:
-            cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.cfg.width)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.cfg.height)
         cap.set(cv2.CAP_PROP_FPS, self.cfg.fps)
+        if self.cfg.compress:
+            # after the size: DirectShow resets the format to YUY2 when the size is set, and
+            # uncompressed 1280x800 only fits ~10 fps through USB 2 (MJPG gives the asked 60)
+            cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
         cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         self.cap = cap
         return self
+
+    def probe_frame(self, timeout=2.0):
+        """True when the opened camera delivers a frame (GREY-only cameras open but never do)."""
+        _quiet_opencv()
+        t = time.perf_counter()
+        while time.perf_counter() - t < timeout:
+            ok, _ = self.cap.read()
+            if ok:
+                return True
+            time.sleep(0.02)
+        return False
+
+    def apply_settings(self, settings, log=print):
+        return camera_options.apply_settings(self.cap, settings, log)
 
     def actual_format(self):
         c = self.cap
@@ -111,7 +174,8 @@ class CameraSource(Source):
     def show_driver_dialog(self):
         """DirectShow property page: exposure / gain / focus set by hand during a test."""
         if self.cap is not None:
-            self.cap.set(cv2.CAP_PROP_SETTINGS, 1)
+            return self.cap.set(cv2.CAP_PROP_SETTINGS, 1)
+        return False
 
     def stop(self):
         self._run = False
@@ -119,6 +183,7 @@ class CameraSource(Source):
             self._thread.join(timeout=1)
         if self.cap is not None:
             self.cap.release()
+            self.cap = None
 
 
 class FileSource(Source):

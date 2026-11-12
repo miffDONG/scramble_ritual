@@ -62,12 +62,22 @@ def apply_settings(cap, settings, log=print):
 
 def crop(frame, cfg):
     """<frame width height xoff yoff> ("max" means the whole capture, offsets in camera
-    pixels), then <settings mirror="true"> flips the result left-right."""
+    pixels), then <settings mirror="true"> flips the result left-right.
+
+    Returns (frame, (ox, oy, W, H)): a point (x, y) of the returned frame is at
+    ((x + ox) / W, (y + oy) / H) of the <frame> region, the TUIO coordinates. With cfg.pad_y
+    the capture is the middle of a frame 2 * pad_y rows taller (camera.xml coordinates): the
+    region is laid on that taller frame and the missing rows count in H, so TUIO y keeps its
+    meaning whichever size the camera sends."""
     h, w = frame.shape[:2]
+    pad = int(getattr(cfg, "pad_y", 0) or 0)
+    full_h = h + 2 * pad
     fw = w if str(cfg.frame_width) == "max" else min(int(cfg.frame_width), w)
-    fh = h if str(cfg.frame_height) == "max" else min(int(cfg.frame_height), h)
+    fh = full_h if str(cfg.frame_height) == "max" else min(int(cfg.frame_height), full_h)
     x0 = max(0, min(cfg.xoff, w - fw))
-    y0 = max(0, min(cfg.yoff, h - fh))
-    if fw != w or fh != h:
-        frame = frame[y0:y0 + fh, x0:x0 + fw]
-    return cv2.flip(frame, 1) if getattr(cfg, "mirror", False) else frame
+    y0 = max(0, min(cfg.yoff, full_h - fh))
+    r0, r1 = max(0, y0 - pad), min(h, y0 + fh - pad)       # rows of the region the camera sent
+    if fw != w or r0 != 0 or r1 != h:
+        frame = frame[r0:r1, x0:x0 + fw]
+    space = (0, r0 + pad - y0, fw, fh)
+    return (cv2.flip(frame, 1) if getattr(cfg, "mirror", False) else frame), space

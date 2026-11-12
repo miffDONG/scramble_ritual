@@ -3,8 +3,12 @@ kept in the program so every copy of Ritualvision.exe behaves the same, wherever
 whatever camera.xml (written by the exhibit server or left by reacTIVision) sits next to it.
 
 Measured on the exhibit table (IR filter, IR LED strips, USB camera 0C45:636D), FIXLOG 11:
-  fps 30      this camera's MJPG 120 fps mode (also what a request for 60 gets) caps the
-              exposure at about 1/128 s; 30 fps allows 1/32 s and the image is ~2.8x brighter.
+  1280x720 @ 60  at 1280x800 this camera only runs 120 / 30 / 15 fps (any request from 46 to
+              119 opens 120). 120 caps the exposure at about 1/128 s and the image is dark;
+              1280x720 has a real 60 fps mode, ~1.9x brighter than 120 (30 fps would be
+              ~2.8x, FIXLOG 11-12). 720 is the middle of the 800-row sensor, not a rescale:
+              same marker size, every y 40 px up. pad_y = 40 puts those 40 rows back in the
+              coordinates, so TUIO and camera.xml <frame> stay in 1280x800 terms.
               reacTIVision looked brighter for the same reason: its camera.xml asks for
               uncompressed YUY2, which this camera only gives at 10 fps.
   exposure -5 with gain / brightness / contrast / gamma / sharpness at the driver defaults: written
@@ -12,12 +16,15 @@ Measured on the exhibit table (IR filter, IR LED strips, USB camera 0C45:636D), 
               in camera.xml means "leave it"), so the image depended on what ran before.
   valley, no face check, mirror: see recognizer.Recognizer and FIXLOG 5, 8, 9.
 
-camera.xml still gives the camera id, resolution and the <frame> region. Run with
+camera.xml still gives the camera id and the <frame> region (in 1280x800 camera pixels). Run with
 --profile none to use camera.xml (and its <settings>) alone, as before.
 """
 
 EXHIBIT = {
-    "fps": 30,
+    "width": 1280,
+    "height": 720,
+    "pad_y": 40,
+    "fps": 60,
     "compress": True,                       # MJPG
     "settings": {"exposure": -5, "gain": 15, "brightness": 0, "contrast": 32, "gamma": 100,
                  "sharpness": 3},
@@ -36,7 +43,7 @@ def apply(cam_cfg, name="exhibit", log=print):
         log("  profile none (camera.xml only)")
         return cam_cfg
     changed = []
-    for key in ("fps", "compress", "mirror", "face_check", "valley"):
+    for key in ("width", "height", "pad_y", "fps", "compress", "mirror", "face_check", "valley"):
         old = getattr(cam_cfg, key)
         if old != prof[key]:
             changed.append(f"{key} {old}->{prof[key]}")

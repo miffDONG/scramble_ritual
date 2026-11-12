@@ -49,6 +49,10 @@ class CameraConfig:
     # <settings valley="true">: line = thin dark stripe between brighter pixels, with <recognizer
     # offset> read as a percentage of the local brightness (Recognizer.valley). For IR light.
     valley: bool = False
+    # rows the camera itself leaves off at the top (and as many at the bottom) of the size it
+    # captures, against the frame camera.xml and TUIO are measured in. The exhibit profile reads
+    # 1280x720, which this camera takes from the middle of its 1280x800 sensor: pad_y = 40.
+    pad_y: int = 0
 
 
 @dataclass

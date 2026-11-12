@@ -82,13 +82,13 @@ class Pipeline:
         if frame is None or (no == self._last_no and not self.file_source):
             return False
         self._last_no = no
-        frame = camera_options.crop(frame, self.cam_cfg)
+        frame, (ox, oy, W, H) = camera_options.crop(frame, self.cam_cfg)
         if not self.paused:
             markers = self.rec.process(frame)
             self.markers, self.mask = markers, self.rec.mask
-            H, W = frame.shape[:2]
-            objs = self.tracker.update([(m.fid, m.x / W, m.y / H, math.radians(m.angle), m.size)
-                                        for m in markers])
+            # W x H is the camera.xml frame (1280x800), also when the camera sends less (pad_y)
+            objs = self.tracker.update([(m.fid, (m.x + ox) / W, (m.y + oy) / H,
+                                         math.radians(m.angle), m.size) for m in markers])
             self.tuio.send(objs, (W, H))
             if self.verbose and time.perf_counter() - self._verbose_t >= 0.1:   # at most 10 lines/s
                 self._verbose_t = time.perf_counter()
@@ -186,6 +186,8 @@ def main(argv=None):
     log(f"  ids     {ids_path} ({len(ids)} markers)")
     log(f"  TUIO    udp://{app.tuio_host}:{app.tuio_port} /tuio/2Dobj")
     profile.apply(cam_cfg, args.profile, log)
+    if args.source:
+        cam_cfg.pad_y = 0               # an image / video file is the whole frame as it is
 
     if args.source:
         src = FileSource(args.source)
@@ -199,7 +201,9 @@ def main(argv=None):
         w, h, fps = src.actual_format()
         log(f"  camera  {src.name} ({src.backend}): {w}x{h} @ {fps} fps "
             f"(asked {cam_cfg.width}x{cam_cfg.height} @ {cam_cfg.fps})"
-            + ("  mirrored left-right" if cam_cfg.mirror else ""))
+            + ("  mirrored left-right" if cam_cfg.mirror else "")
+            + (f"  (rows {cam_cfg.pad_y}..{cam_cfg.pad_y + h} of {h + 2 * cam_cfg.pad_y}: TUIO y in "
+               f"{w}x{h + 2 * cam_cfg.pad_y})" if cam_cfg.pad_y else ""))
     src.start()
 
     rec = Recognizer(ids, block=app.block, offset=app.offset, invert=app.invert, equalize=app.equalize,

@@ -17,7 +17,7 @@ import time
 import cv2
 
 from . import __version__
-from . import camera_options
+from . import camera_options, profile
 from .camera import FileSource, list_cameras, open_camera
 from .config import base_dir, bundled, load_app, load_camera, resolve_files
 from .display import draw, no_image
@@ -149,6 +149,9 @@ def parse_args(argv):
     p.add_argument("--json", action="store_true", help="print detections as JSON lines")
     p.add_argument("--list-cameras", action="store_true", help="probe camera indexes 0-5 and exit")
     p.add_argument("--mask", action="store_true", help="start in the line-mask (binarized) view")
+    p.add_argument("--profile", choices=sorted(profile.PROFILES), default="exhibit",
+                   help="built-in camera / line settings over camera.xml (default exhibit; "
+                        "none = camera.xml alone)")
     return p.parse_args(argv)
 
 
@@ -182,6 +185,7 @@ def main(argv=None):
     log(f"  config  {cam_xml} | {app_xml}" + (f" + {rv_xml}" if os.path.exists(rv_xml) else ""))
     log(f"  ids     {ids_path} ({len(ids)} markers)")
     log(f"  TUIO    udp://{app.tuio_host}:{app.tuio_port} /tuio/2Dobj")
+    profile.apply(cam_cfg, args.profile, log)
 
     if args.source:
         src = FileSource(args.source)

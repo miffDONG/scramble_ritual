@@ -1,0 +1,50 @@
+"""Built-in exhibit profile (IR-lit table): the camera and line settings Ritualvision needs,
+kept in the program so every copy of Ritualvision.exe behaves the same, wherever it runs and
+whatever camera.xml (written by the exhibit server or left by reacTIVision) sits next to it.
+
+Measured on the exhibit table (IR filter, IR LED strips, USB camera 0C45:636D), FIXLOG 11:
+  fps 30      this camera's MJPG 120 fps mode (also what a request for 60 gets) caps the
+              exposure at about 1/128 s; 30 fps allows 1/32 s and the image is ~2.8x brighter.
+              reacTIVision looked brighter for the same reason: its camera.xml asks for
+              uncompressed YUY2, which this camera only gives at 10 fps.
+  exposure -5 with gain / brightness / contrast / gamma / sharpness at the driver defaults: written
+              every start, because DirectShow keeps whatever the last program set ("default"
+              in camera.xml means "leave it"), so the image depended on what ran before.
+  valley, no face check, mirror: see recognizer.Recognizer and FIXLOG 5, 8, 9.
+
+camera.xml still gives the camera id, resolution and the <frame> region. Run with
+--profile none to use camera.xml (and its <settings>) alone, as before.
+"""
+
+EXHIBIT = {
+    "fps": 30,
+    "compress": True,                       # MJPG
+    "settings": {"exposure": -5, "gain": 15, "brightness": 0, "contrast": 32, "gamma": 100,
+                 "sharpness": 3},
+    "mirror": True,
+    "face_check": False,
+    "valley": True,
+}
+
+PROFILES = {"exhibit": EXHIBIT, "none": None}
+
+
+def apply(cam_cfg, name="exhibit", log=print):
+    """Override camera.xml values in `cam_cfg` with the named profile; logs what changed."""
+    prof = PROFILES.get(name)
+    if prof is None:
+        log("  profile none (camera.xml only)")
+        return cam_cfg
+    changed = []
+    for key in ("fps", "compress", "mirror", "face_check", "valley"):
+        old = getattr(cam_cfg, key)
+        if old != prof[key]:
+            changed.append(f"{key} {old}->{prof[key]}")
+        setattr(cam_cfg, key, prof[key])
+    for key, val in prof["settings"].items():
+        old = cam_cfg.settings.get(key, "default")
+        if str(old).strip().lower() != str(val):
+            changed.append(f"{key} {old}->{val}")
+        cam_cfg.settings[key] = val
+    log(f"  profile {name}" + (f" (over camera.xml: {', '.join(changed)})" if changed else ""))
+    return cam_cfg

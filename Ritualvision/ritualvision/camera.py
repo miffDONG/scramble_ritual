@@ -119,12 +119,15 @@ class CameraSource(Source):
             cap.release()
         if cap is None or not cap.isOpened():
             raise RuntimeError(f"camera {self.cfg.camera_id} could not be opened")
+        # Order matters with DirectShow (tested on the exhibit camera, FIXLOG 11): the fps goes
+        # first, the format last. Setting the size resets the format to YUY2 (uncompressed
+        # 1280x800 is 10 fps on USB 2), and setting the fps after MJPG switches it back to YUY2
+        # too; with the fps after the size but before MJPG, MJPG came up at its fastest mode
+        # (120) whatever fps was asked.
+        cap.set(cv2.CAP_PROP_FPS, self.cfg.fps)
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.cfg.width)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.cfg.height)
-        cap.set(cv2.CAP_PROP_FPS, self.cfg.fps)
         if self.cfg.compress:
-            # after the size: DirectShow resets the format to YUY2 when the size is set, and
-            # uncompressed 1280x800 only fits ~10 fps through USB 2 (MJPG gives the asked 60)
             cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
         cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         self.cap = cap

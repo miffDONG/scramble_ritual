@@ -53,6 +53,10 @@ class CameraConfig:
     # captures, against the frame camera.xml and TUIO are measured in. The exhibit profile reads
     # 1280x720, which this camera takes from the middle of its 1280x800 sensor: pad_y = 40.
     pad_y: int = 0
+    # recognizer at the image's left / right border (lens edge, FIXLOG 13): px of the band with
+    # a lower line threshold, and how far out a border tile's dashes are searched (x rc)
+    edge_band: int = 0
+    dash_outer_edge: float = 0.95
 
 
 @dataclass

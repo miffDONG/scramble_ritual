@@ -58,8 +58,27 @@ def load_ids(path):
 class Recognizer:
     def __init__(self, ids, block=0, offset=10.0, invert=False, equalize=False,
                  min_arm=12.0, max_arm=400.0, angle_tol=6.0, min_rc=0.0, max_rc=0.0,
-                 face_check=True, valley=False):
+                 face_check=True, valley=False, spots=False, edge_band=0):
         self.ids = ids
+        # spots=True (valley mode): the IR LEDs leave small fixed bright dots in the image (their
+        # reflections). A line running through one is cut there and a dash under one is lost.
+        # The dots are found about once a second (_find_spots); the line mask is bridged across
+        # them, and an edge with a dot on it may count one dash more (_decode).
+        self.spots = spots
+        self.spot_every = 60            # frames between two dot searches
+        self.spot_hat = 60              # a dot is this much brighter than around it (half scale)
+        self.spot_zone = None           # 255 where a dot (grown) is, or None
+        self._spot_boxes = []
+        self._spot_age = 0
+        # edge_band (valley mode): within this many px of the image's left / right border the
+        # line test needs only 3/4 of `offset`. The lens edge blurs and dims lines there; a
+        # fold arm along the border came out half missing (FIXLOG 13).
+        self.edge_band = edge_band
+        self.dash_outer = 0.95          # dashes searched out to this x rc (see _decode)
+        self.dash_outer_edge = 0.95     # ... for a tile whose centre is within 1.5 rc of the
+        #                                 left / right border (1.0 for the exhibit camera)
+        self._width = 0
+        self.edge_scale = 0.75
         # binarize(): valley=True takes a line to be a thin dark stripe with brighter pixels on
         # both sides (camera.xml <settings valley="true">), instead of "darker than the local
         # mean". For IR light, where the dark background next to a bright tile is darker than
@@ -124,19 +143,120 @@ class Recognizer:
         closed = cv2.morphologyEx(gray, cv2.MORPH_CLOSE, self._valley_kernel)
         depth = cv2.subtract(closed, gray)
         need = cv2.max(cv2.multiply(closed, self.offset / 100.0, dtype=cv2.CV_8U), 5)
+        b = min(int(self.edge_band), gray.shape[1] // 2)
+        if b > 0:
+            pct = self.offset * self.edge_scale / 100.0
+            for sl in (np.s_[:, :b], np.s_[:, -b:]):
+                need[sl] = cv2.max(cv2.multiply(closed[sl], pct, dtype=cv2.CV_8U), 5)
         m = cv2.compare(depth, need, cv2.CMP_GT)
         nb = cv2.boxFilter(m, -1, (3, 3))                       # specks, as in binarize()
         _, keep = cv2.threshold(nb, 79, 255, cv2.THRESH_BINARY)
-        return cv2.bitwise_and(m, keep)
+        m = cv2.bitwise_and(m, keep)
+        if self.spots:
+            if self.spot_zone is None or self.spot_zone.shape != gray.shape or self._spot_age <= 0:
+                self._find_spots(gray)
+                self._spot_age = self.spot_every
+            self._spot_age -= 1
+            m = cv2.bitwise_and(m, cv2.bitwise_not(self.spot_zone))   # bridged in process()
+        return m
 
     _valley_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 9))
+
+    # ------------------------------------------------------------ LED dots
+    _spot_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9))       # half scale
+    _bridge_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15))
+
+    def _find_spots(self, gray):
+        """Small, round, much brighter than their surroundings: the LED reflections (8-12 px
+        across on the exhibit camera). Searched at half size for speed. A tile's bright rim is a
+        thin line, not round, and is left out by the shape test."""
+        small = cv2.resize(gray, None, fx=0.5, fy=0.5, interpolation=cv2.INTER_AREA)
+        hat = cv2.subtract(small, cv2.morphologyEx(small, cv2.MORPH_OPEN, self._spot_kernel))
+        n, lab, st, _ = cv2.connectedComponentsWithStats(cv2.compare(hat, self.spot_hat, cv2.CMP_GT))
+        w, h, a = st[:, 2], st[:, 3], st[:, 4]
+        ok = ((a >= 2) & (a <= 60) & (np.maximum(w, h) <= 2.2 * np.minimum(w, h) + 1)
+              & (a >= 0.4 * w * h))
+        ok[0] = False
+        dots = cv2.resize(ok[lab].astype(np.uint8) * 255, (gray.shape[1], gray.shape[0]),
+                          interpolation=cv2.INTER_NEAREST)
+        # grown by 3 px: the valley test leaves a dark-looking halo just around a bright dot
+        zone = cv2.dilate(dots, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7)))
+        # one work box per group of dots (an LED shows as three in a row)
+        n, lab, st, _ = cv2.connectedComponentsWithStats(cv2.dilate(zone, np.ones((15, 15), np.uint8)))
+        self.spot_zone = zone
+        # the 2 px ring just outside the zones: a line piece that would continue under a dot
+        # touches it
+        self._spot_ring = cv2.subtract(cv2.dilate(zone, np.ones((5, 5), np.uint8)), zone)
+        self._spot_boxes = [tuple(int(v) for v in st[i, :4]) for i in range(1, n)]
+        ry, rx = np.nonzero(self._spot_ring)
+        self._ring_idx = ry * gray.shape[1] + rx               # flat index of every ring pixel
+        self._ring_box = lab[ry, rx] - 1                       # its work box
+
+    def _bridge_spots(self, m, labels, stats):
+        """Inside each dot zone the mask is unreliable (a line under the dot is too bright, the
+        gap between neighbouring dots looks like a dark stripe), so binarize() cleared it. Here
+        a line that enters one side of a dot and leaves the other in the same direction is drawn
+        across: a fold arm or a dash running under the dot. Pieces that do not line up stay
+        apart. Uses the frame's labelling; returns True when something was drawn."""
+        H, W = m.shape
+        drew = False
+        # (box, label) of every line piece reaching a dot, in one pass over the ring pixels
+        lab_r = labels.ravel()[self._ring_idx]
+        sel = lab_r > 0
+        if not sel.any():
+            return False
+        ext = np.maximum(stats[:, 2], stats[:, 3])
+        stroke = (stats[:, 4] >= 6) & (ext >= 5) & (stats[:, 4] <= 0.5 * ext * ext)
+        sel &= stroke[lab_r]
+        pairs = np.unique(self._ring_box[sel].astype(np.int64) * (len(stats) + 1) + lab_r[sel])
+        boxes, labs = pairs // (len(stats) + 1), pairs % (len(stats) + 1)
+        for b in np.unique(boxes):
+            ids = labs[boxes == b]
+            if len(ids) < 2 or len(ids) > 12:                   # nothing to join, or clutter
+                continue
+            ends = []
+            for i in ids:
+                bx, by, bw, bh = stats[i, :4]
+                mo = cv2.moments((labels[by:by + bh, bx:bx + bw] == i).view(np.uint8), binaryImage=True)
+                a20, a02, a11 = mo["mu20"] / mo["m00"], mo["mu02"] / mo["m00"], mo["mu11"] / mo["m00"]
+                com = math.sqrt(4 * a11 * a11 + (a20 - a02) ** 2)
+                l1, l2 = (a20 + a02 + com) / 2, (a20 + a02 - com) / 2
+                if l1 < 6.0 * max(l2, 0.05):                     # not a stroke
+                    continue
+                th = 0.5 * math.atan2(2 * a11, a20 - a02)
+                u = np.array([math.cos(th), math.sin(th)])
+                c = np.array([bx + mo["m10"] / mo["m00"], by + mo["m01"] / mo["m00"]])
+                half = math.sqrt(3.0 * l1)                        # half length of a bar
+                ends.append((c, u, c - half * u, c + half * u, max(1, int(round(math.sqrt(12.0 * max(l2, 0)))))))
+            for i in range(len(ends)):
+                for j in range(i + 1, len(ends)):
+                    ci, ui, ai, bi, wi = ends[i]
+                    cj, uj, aj, bj, wj = ends[j]
+                    if abs(ui @ uj) < 0.97:                      # not the same direction
+                        continue
+                    if abs((cj - ci) @ np.array([-ui[1], ui[0]])) > 2.5:   # not on one line
+                        continue
+                    p, q = min(((a, b) for a in (ai, bi) for b in (aj, bj)),
+                               key=lambda ab: np.linalg.norm(ab[0] - ab[1]))
+                    if np.linalg.norm(p - q) > 26:
+                        continue
+                    mx, my = np.clip(np.round((p + q) / 2).astype(int), 0, [W - 1, H - 1])
+                    if not self.spot_zone[my, mx]:               # the gap is not under a dot
+                        continue
+                    cv2.line(m, tuple(int(v) for v in np.round(p)), tuple(int(v) for v in np.round(q)),
+                             255, max(wi, wj))
+                    drew = True
+        return drew
 
     # --------------------------------------------------------------- per frame
     def process(self, frame):
         gray = frame if frame.ndim == 2 else cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        self._width = gray.shape[1]
         mask = self.binarize(gray)
         self.mask = mask
         n, labels, stats, cents = cv2.connectedComponentsWithStats(mask, connectivity=8)
+        if self.spots and self.valley and self.spot_zone is not None                 and self._bridge_spots(mask, labels, stats):
+            n, labels, stats, cents = cv2.connectedComponentsWithStats(mask, connectivity=8)
         st = stats[1:]
         keep = np.flatnonzero(st[:, 4] >= 4) + 1                # drop specks without a Python loop
         comps = {"i": keep, "x": stats[keep, 0], "y": stats[keep, 1], "w": stats[keep, 2],
@@ -248,6 +368,30 @@ class Recognizer:
         return {"corner": corner, "centre": centre, "rc": rc, "rc_long": max(ra, rb), "ua": ua, "ub": ub,
                 "len_a": len(ga), "len_b": len(gb), "pts": (A, C, B), "arm_angle": arm_angle}
 
+    def _spot_code(self, code, O, rc, corner_dir):
+        """An edge with a dot on it may hide one dash (or a dot merged two): try one more dash
+        on such edges. Accepted only when exactly one of the tries is in the id table."""
+        H, W = self.spot_zone.shape
+        x0, y0 = max(0, int(O[0] - rc)), max(0, int(O[1] - rc))
+        if not cv2.countNonZero(self.spot_zone[y0:min(H, int(O[1] + rc) + 1), x0:min(W, int(O[0] + rc) + 1)]):
+            return code, -1
+        edges = _spot_edges(self.spot_zone, O, rc, corner_dir)
+        if not edges:
+            return code, -1
+        idx = [k for k, _ in SECTORS]
+        found = set()
+        for mask in range(1, 1 << len(edges)):
+            c = list(code)
+            for j, k in enumerate(edges):
+                if mask >> j & 1:
+                    c[idx.index(k)] += 1
+            if tuple(c) in self.ids:
+                found.add(tuple(c))
+        if len(found) == 1:
+            c = found.pop()
+            return c, self.ids[c]
+        return code, -1
+
     def _dedupe(self, anchors):
         out = []
         for a in sorted(anchors, key=lambda a: -a["rc"]):
@@ -266,7 +410,13 @@ class Recognizer:
         # up to 0.943 rc measured at the right edge, hence 0.95. The 3D tile's rim (0.938 rc at
         # an edge's middle) would fit in too, but binarize() keeps only pixels darker than the
         # tile face, and the rim is not.
-        near = np.flatnonzero((r_all > 0.78 * rc) & (r_all < 0.95 * rc)
+        # At the image's left / right edge the lens squeezes the tile: the fold comes out ~5%
+        # short and the dashes far from it reach 0.97 rc (FIXLOG 13). The ring is widened there
+        # only; elsewhere 1.0 picked up stray pixels and lost frames.
+        r_hi = self.dash_outer
+        if self._width and min(O[0], self._width - 1 - O[0]) < 1.5 * rc:
+            r_hi = max(r_hi, self.dash_outer_edge)
+        near = np.flatnonzero((r_all > 0.78 * rc) & (r_all < r_hi * rc)
                               & (np.maximum(comps["w"], comps["h"]) <= 0.95 * rc)
                               & (comps["area"] <= 0.25 * rc * rc))
         for j in near:
@@ -324,9 +474,29 @@ class Recognizer:
                 kept.append(cen)
         code = tuple(counts[k] for k, _ in SECTORS)
         fid = self.ids.get(code, -1)
+        if fid < 0 and self.spots and self.spot_zone is not None:
+            code, fid = self._spot_code(code, O, rc, corner_dir)
         angle = (corner_dir - CORNER_DEG) % 360.0
         return Marker(fid, code, float(O[0]), float(O[1]), angle, float(rc),
                       a["arm_angle"], corner_dir, tuple(a["corner"]), a["pts"], kept)
+
+
+_EDGE_R, _EDGE_S = (a.ravel() for a in np.meshgrid([0.84, 0.87, 0.90], np.linspace(-0.45, 0.45, 19)))
+
+
+def _spot_edges(zone, O, rc, corner_dir):
+    """Which id edges have a dot zone on their dash line (0.84-0.90 rc, middle 90% of the edge)."""
+    H, W = zone.shape
+    hit = []
+    for k, rel in SECTORS:
+        n = math.radians(corner_dir + rel)
+        u, t = np.array([math.cos(n), math.sin(n)]), np.array([-math.sin(n), math.cos(n)])
+        p = O + rc * (_EDGE_R[:, None] * u + _EDGE_S[:, None] * t)
+        xi, yi = np.round(p[:, 0]).astype(int), np.round(p[:, 1]).astype(int)
+        ok = (xi >= 0) & (xi < W) & (yi >= 0) & (yi < H)
+        if zone[yi[ok], xi[ok]].any():
+            hit.append(k)
+    return hit
 
 
 def _seg_dist(p, a, b):

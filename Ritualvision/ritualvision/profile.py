@@ -15,6 +15,9 @@ Measured on the exhibit table (IR filter, IR LED strips, USB camera 0C45:636D), 
               every start, because DirectShow keeps whatever the last program set ("default"
               in camera.xml means "leave it"), so the image depended on what ran before.
   valley, no face check, mirror: see recognizer.Recognizer and FIXLOG 5, 8, 9.
+  edge_band 40, dash_outer_edge 1.0: a tile at the image's left / right border is squeezed
+              and blurred by the lens; a lower line threshold in a 40 px band and dashes
+              searched out to 1.0 rc for such a tile (FIXLOG 13).
 
 camera.xml still gives the camera id and the <frame> region (in 1280x800 camera pixels). Run with
 --profile none to use camera.xml (and its <settings>) alone, as before.
@@ -31,6 +34,8 @@ EXHIBIT = {
     "mirror": True,
     "face_check": False,
     "valley": True,
+    "edge_band": 40,
+    "dash_outer_edge": 1.0,
 }
 
 PROFILES = {"exhibit": EXHIBIT, "none": None}
@@ -43,7 +48,8 @@ def apply(cam_cfg, name="exhibit", log=print):
         log("  profile none (camera.xml only)")
         return cam_cfg
     changed = []
-    for key in ("width", "height", "pad_y", "fps", "compress", "mirror", "face_check", "valley"):
+    for key in ("width", "height", "pad_y", "fps", "compress", "mirror", "face_check", "valley",
+                "edge_band", "dash_outer_edge"):
         old = getattr(cam_cfg, key)
         if old != prof[key]:
             changed.append(f"{key} {old}->{prof[key]}")

@@ -208,9 +208,14 @@ def main(argv=None):
 
     rec = Recognizer(ids, block=app.block, offset=app.offset, invert=app.invert, equalize=app.equalize,
                      min_arm=app.min_anchor_px, max_arm=app.max_anchor_px,
-                     face_check=cam_cfg.face_check, valley=cam_cfg.valley)
+                     face_check=cam_cfg.face_check, valley=cam_cfg.valley,
+                     edge_band=cam_cfg.edge_band)
+    rec.dash_outer_edge = cam_cfg.dash_outer_edge
     log(f"  lines   valley, {app.offset:g}% darker than the filled-in brightness" if cam_cfg.valley
         else f"  lines   local mean - {app.offset:g}, face check {'on' if cam_cfg.face_check else 'off'}")
+    if cam_cfg.edge_band:
+        log(f"  edges   {cam_cfg.edge_band}px band at {rec.edge_scale:.0%} threshold, "
+            f"border tiles' dashes out to {cam_cfg.dash_outer_edge:g} rc")
     # size range from the exhibit server's contact measurement (ritualvision.xml)
     srv_range = app.size_range()
     size_status = (f"size {app.size_ref:.1f}px -{app.size_lo:g}%/+{app.size_hi:g}%"

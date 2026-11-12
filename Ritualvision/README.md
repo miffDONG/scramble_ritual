@@ -74,8 +74,9 @@ Ritualvision.exe --profile none      내장 전시 프로필 끄기 (camera.xml�
 | exposure / gain / brightness / contrast / gamma / sharpness | -5 / 15 / 0 / 32 / 100 / 3 | 매 시작마다 씁니다. 드라이버는 마지막 프로그램이 남긴 값을 유지하므로 `default`로 두면 이전에 무엇을 실행했는지에 따라 밝기가 달라집니다 |
 | mirror | 켬 | 이 카메라는 영상을 좌우 반전해서 보냅니다 |
 | 선 판정 | valley, 면 조건 끔 | 밝은 타일·어두운 배경(IR) 기준. `ritualvision.xml`의 offset은 %로 읽습니다(12~14 권장) |
+| 화면 좌우 가장자리 | 40px 띠는 기준 75%, 가장자리 타일은 대시를 1.0 rc까지 | 렌즈 가장자리에서 타일이 눌리고 선이 흐려집니다(FIXLOG 13) |
 
-camera.xml에서는 카메라 번호와 `<frame>`(ROI, 1280x800 기준)만 쓰입니다. 자세한 근거는 FIXLOG 8~12번.
+camera.xml에서는 카메라 번호와 `<frame>`(ROI, 1280x800 기준)만 쓰입니다. 자세한 근거는 FIXLOG 8~13번.
 
 ## 설정 파일 (exe 옆)
 

@@ -66,6 +66,7 @@ Ritualvision.exe --source 사진.png --once   한 장 인식 결과를 JSON으�
 ## 설정 파일 (exe 옆)
 
 - `camera.xml`: reacTIVision과 같은 형식. `<camera id driver>`(driver는 Ritualvision 전용), `<capture width height fps compress>`, `<settings brightness gain exposure focus …>`, `<frame …>`(ROI).
+  - `<settings mirror="true">`(Ritualvision 전용): 영상을 좌우로 뒤집은 뒤 인식합니다(ROI를 자른 다음). 타일은 선을 다리 삼아 유리 위에 서므로, 테이블 아래 카메라는 타일의 **진짜 밑면**을 봐야 합니다. 영상을 스스로 좌우 반전하는 웹캠이면 모든 코드가 거꾸로 읽혀(D_001 = id 21이 `1232`로) 빨간색이 뜨므로 이 값을 켭니다. `<settings>` 안에 둔 이유는 전시 서버가 camera.xml을 다시 쓸 때도 `<settings>` 속성은 그대로 두기 때문입니다.
 - `reacTIVision.xml`: `<tuio host port>`, `<image display>`. 전시 서버가 웹 UI 설정으로 다시 씁니다.
 - `ritualvision.xml`: Ritualvision 전용 `<recognizer block offset invert hold ids>`. reacTIVision.xml 다음에 읽으므로 서버가 덮어써도 유지됩니다.
 - `ids.json`: ID ↔ 대시 조합 표 (UR, R, LR, LL). 25개 마커와 같은 순서.

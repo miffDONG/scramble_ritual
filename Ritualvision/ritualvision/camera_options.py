@@ -61,12 +61,13 @@ def apply_settings(cap, settings, log=print):
 
 
 def crop(frame, cfg):
-    """<frame width height xoff yoff>: "max" means the whole capture."""
+    """<frame width height xoff yoff> ("max" means the whole capture, offsets in camera
+    pixels), then <settings mirror="true"> flips the result left-right."""
     h, w = frame.shape[:2]
     fw = w if str(cfg.frame_width) == "max" else min(int(cfg.frame_width), w)
     fh = h if str(cfg.frame_height) == "max" else min(int(cfg.frame_height), h)
     x0 = max(0, min(cfg.xoff, w - fw))
     y0 = max(0, min(cfg.yoff, h - fh))
-    if fw == w and fh == h:
-        return frame
-    return frame[y0:y0 + fh, x0:x0 + fw]
+    if fw != w or fh != h:
+        frame = frame[y0:y0 + fh, x0:x0 + fw]
+    return cv2.flip(frame, 1) if getattr(cfg, "mirror", False) else frame

@@ -25,6 +25,7 @@ import cv2
 import numpy as np
 
 CORNER_DEG = 210.0                       # anchor corner direction at 0 deg rotation
+FACE_MARGIN = 4                          # binarize(): a line is this much darker than the tile face
 # ID edges: outward normal relative to the corner direction
 SECTORS = (("UR", 90.0), ("R", 150.0), ("LR", -150.0), ("LL", -90.0))
 
@@ -56,8 +57,18 @@ def load_ids(path):
 
 class Recognizer:
     def __init__(self, ids, block=0, offset=10.0, invert=False, equalize=False,
-                 min_arm=12.0, max_arm=400.0, angle_tol=6.0, min_rc=0.0, max_rc=0.0):
+                 min_arm=12.0, max_arm=400.0, angle_tol=6.0, min_rc=0.0, max_rc=0.0,
+                 face_check=True, valley=False):
         self.ids = ids
+        # binarize(): valley=True takes a line to be a thin dark stripe with brighter pixels on
+        # both sides (camera.xml <settings valley="true">), instead of "darker than the local
+        # mean". For IR light, where the dark background next to a bright tile is darker than
+        # the local mean too and its edge came out as a second hexagon of lines.
+        self.valley = valley
+        # binarize(): also require a line to be darker than the tile face. Made for a bright
+        # table; under IR light the background is as dark as the lines and passes for the
+        # "face", so no line survives: camera.xml <settings face_check="false"> turns it off
+        self.face_check = face_check
         self.angle_tol = angle_tol      # fold must be 120 deg +- this
         self.min_rc = min_rc            # smallest accepted size (px); 0 = off
         self.max_rc = max_rc            # largest accepted size (px); 0 = off. A fold merged
@@ -77,6 +88,8 @@ class Recognizer:
             gray = cv2.equalizeHist(gray)
         if self.invert:
             gray = 255 - gray
+        if self.valley:
+            return self._valley(gray)
         # a small window keeps the dark halo that the table forms next to a bright tile thin,
         # so lines near the tile edge do not merge with it (tested: 15 px suits 90-160 px tiles)
         b = (self.block or 15) | 1
@@ -89,7 +102,34 @@ class Recognizer:
         # (on the 0/255 mask the 3x3 mean is 85 x the dark-pixel count / 3: >= 3 pixels <=> >= 80)
         nb = cv2.boxFilter(m, -1, (3, 3))
         _, keep = cv2.threshold(nb, 79, 255, cv2.THRESH_BINARY)
+        m = cv2.bitwise_and(m, keep)
+        # Next to the bright table the tile's own rim is darker than the local mean too, and at
+        # a corner it bridged the fold's end to a dash (one component: no fold found). The rim
+        # is as light as the tile face, a line is darker: keep only pixels darker than the
+        # darkest local mean around them (the tile face) by FACE_MARGIN. Tested on the camera
+        # frames, the stl_hexcell renders and the paper-marker snapshots: 0-4 keep every line
+        # (8 and up start to drop some), 4 cuts every rim bridge seen so far.
+        if not self.face_check:
+            return m
+        face = cv2.erode(cv2.blur(gray, (b, b)), np.ones((b, b), np.uint8))
+        darker = cv2.compare(gray, cv2.subtract(face, FACE_MARGIN), cv2.CMP_LT)
+        return cv2.bitwise_and(m, darker)
+
+    def _valley(self, gray):
+        """Line mask for IR light: a pixel is "line" when it is darker than the closing of the
+        image (the brightness it would have were the thin dark stripe filled in) by `offset`
+        percent. A 9 px window fills strokes up to 8 px wide; the dark background beside a tile
+        is wider than that, stays unfilled and gives no line. A percentage rather than grey
+        levels because the tiles are lit unevenly (faces measured 131 / 165 / 199 in one frame)."""
+        closed = cv2.morphologyEx(gray, cv2.MORPH_CLOSE, self._valley_kernel)
+        depth = cv2.subtract(closed, gray)
+        need = cv2.max(cv2.multiply(closed, self.offset / 100.0, dtype=cv2.CV_8U), 5)
+        m = cv2.compare(depth, need, cv2.CMP_GT)
+        nb = cv2.boxFilter(m, -1, (3, 3))                       # specks, as in binarize()
+        _, keep = cv2.threshold(nb, 79, 255, cv2.THRESH_BINARY)
         return cv2.bitwise_and(m, keep)
+
+    _valley_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 9))
 
     # --------------------------------------------------------------- per frame
     def process(self, frame):
@@ -137,8 +177,18 @@ class Recognizer:
         markers = []
         for a in anchors:
             m = self._decode(a, comps, labels, dash_cache)
-            if m is not None:
-                markers.append(m)
+            # A fold arm whose end faded (dim tile) is cut short: the mean of the two arms is then
+            # too small, the centre lands off the tile's and the dashes fall outside their ring
+            # (code 0000 on the camera). When the arms differ and the mean gives no id, the
+            # longer arm alone is tried. A dropped dash never makes a valid id, so this cannot
+            # turn one marker into another.
+            if m.fid < 0 and a["rc_long"] > 1.04 * a["rc"]:
+                b = dict(a, rc=a["rc_long"], centre=a["corner"] + a["rc_long"] * (a["ua"] + a["ub"]))
+                if self.max_rc <= 0 or b["rc"] <= self.max_rc:
+                    m2 = self._decode(b, comps, labels, dash_cache)
+                    if m2.fid >= 0:
+                        m = m2
+            markers.append(m)
         return markers
 
     # 3 ------------------------------------------------------------- anchors
@@ -192,9 +242,10 @@ class Recognizer:
         corner = _intersect(pa, ua, pb, ub)
         if corner is None or np.linalg.norm(corner - C) > 0.25 * arm:
             corner = C
-        rc = 0.5 * (np.max((ga - corner) @ ua) + np.max((gb - corner) @ ub))
+        ra, rb = np.max((ga - corner) @ ua), np.max((gb - corner) @ ub)
+        rc = 0.5 * (ra + rb)
         centre = corner + rc * (ua + ub)
-        return {"corner": corner, "centre": centre, "rc": rc, "ua": ua, "ub": ub,
+        return {"corner": corner, "centre": centre, "rc": rc, "rc_long": max(ra, rb), "ua": ua, "ub": ub,
                 "len_a": len(ga), "len_b": len(gb), "pts": (A, C, B), "arm_angle": arm_angle}
 
     def _dedupe(self, anchors):
@@ -210,9 +261,12 @@ class Recognizer:
         dashes = []
         r_all = np.linalg.norm(comps["c"] - O, axis=1)
         # dashes sit on the same inset ring as the anchor: 0.866 rc at an edge's middle, up to
-        # ~0.90 rc for the outer dash of three. The tile's own edge (printed outline, or the
-        # dark halo of a 3D tile) is at ~0.99 rc and must stay outside this window.
-        near = np.flatnonzero((r_all > 0.78 * rc) & (r_all < 0.94 * rc)
+        # ~0.90 rc for the outer dash of three (printed tiles of stl_hexcell: 0.839-0.888 rc).
+        # Near the image edge the wide-angle lens pushes the dashes far from the fold outward:
+        # up to 0.943 rc measured at the right edge, hence 0.95. The 3D tile's rim (0.938 rc at
+        # an edge's middle) would fit in too, but binarize() keeps only pixels darker than the
+        # tile face, and the rim is not.
+        near = np.flatnonzero((r_all > 0.78 * rc) & (r_all < 0.95 * rc)
                               & (np.maximum(comps["w"], comps["h"]) <= 0.95 * rc)
                               & (comps["area"] <= 0.25 * rc * rc))
         for j in near:

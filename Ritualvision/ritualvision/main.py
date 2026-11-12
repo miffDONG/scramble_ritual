@@ -194,11 +194,15 @@ def main(argv=None):
         src.apply_settings(cam_cfg.settings, log)
         w, h, fps = src.actual_format()
         log(f"  camera  {src.name} ({src.backend}): {w}x{h} @ {fps} fps "
-            f"(asked {cam_cfg.width}x{cam_cfg.height} @ {cam_cfg.fps})")
+            f"(asked {cam_cfg.width}x{cam_cfg.height} @ {cam_cfg.fps})"
+            + ("  mirrored left-right" if cam_cfg.mirror else ""))
     src.start()
 
     rec = Recognizer(ids, block=app.block, offset=app.offset, invert=app.invert, equalize=app.equalize,
-                     min_arm=app.min_anchor_px, max_arm=app.max_anchor_px)
+                     min_arm=app.min_anchor_px, max_arm=app.max_anchor_px,
+                     face_check=cam_cfg.face_check, valley=cam_cfg.valley)
+    log(f"  lines   valley, {app.offset:g}% darker than the filled-in brightness" if cam_cfg.valley
+        else f"  lines   local mean - {app.offset:g}, face check {'on' if cam_cfg.face_check else 'off'}")
     # size range from the exhibit server's contact measurement (ritualvision.xml)
     srv_range = app.size_range()
     size_status = (f"size {app.size_ref:.1f}px -{app.size_lo:g}%/+{app.size_hi:g}%"

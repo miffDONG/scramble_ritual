@@ -17,7 +17,7 @@ import time
 import cv2
 
 from . import __version__
-from . import camera_options
+from . import camera_options, profile
 from .camera import FileSource, list_cameras, open_camera
 from .config import base_dir, bundled, load_app, load_camera, resolve_files
 from .display import draw, no_image
@@ -82,13 +82,13 @@ class Pipeline:
         if frame is None or (no == self._last_no and not self.file_source):
             return False
         self._last_no = no
-        frame = camera_options.crop(frame, self.cam_cfg)
+        frame, (ox, oy, W, H) = camera_options.crop(frame, self.cam_cfg)
         if not self.paused:
             markers = self.rec.process(frame)
             self.markers, self.mask = markers, self.rec.mask
-            H, W = frame.shape[:2]
-            objs = self.tracker.update([(m.fid, m.x / W, m.y / H, math.radians(m.angle), m.size)
-                                        for m in markers])
+            # W x H is the camera.xml frame (1280x800), also when the camera sends less (pad_y)
+            objs = self.tracker.update([(m.fid, (m.x + ox) / W, (m.y + oy) / H,
+                                         math.radians(m.angle), m.size) for m in markers])
             self.tuio.send(objs, (W, H))
             if self.verbose and time.perf_counter() - self._verbose_t >= 0.1:   # at most 10 lines/s
                 self._verbose_t = time.perf_counter()
@@ -149,6 +149,9 @@ def parse_args(argv):
     p.add_argument("--json", action="store_true", help="print detections as JSON lines")
     p.add_argument("--list-cameras", action="store_true", help="probe camera indexes 0-5 and exit")
     p.add_argument("--mask", action="store_true", help="start in the line-mask (binarized) view")
+    p.add_argument("--profile", choices=sorted(profile.PROFILES), default="exhibit",
+                   help="built-in camera / line settings over camera.xml (default exhibit; "
+                        "none = camera.xml alone)")
     return p.parse_args(argv)
 
 
@@ -182,6 +185,9 @@ def main(argv=None):
     log(f"  config  {cam_xml} | {app_xml}" + (f" + {rv_xml}" if os.path.exists(rv_xml) else ""))
     log(f"  ids     {ids_path} ({len(ids)} markers)")
     log(f"  TUIO    udp://{app.tuio_host}:{app.tuio_port} /tuio/2Dobj")
+    profile.apply(cam_cfg, args.profile, log)
+    if args.source:
+        cam_cfg.pad_y = 0               # an image / video file is the whole frame as it is
 
     if args.source:
         src = FileSource(args.source)
@@ -194,11 +200,22 @@ def main(argv=None):
         src.apply_settings(cam_cfg.settings, log)
         w, h, fps = src.actual_format()
         log(f"  camera  {src.name} ({src.backend}): {w}x{h} @ {fps} fps "
-            f"(asked {cam_cfg.width}x{cam_cfg.height} @ {cam_cfg.fps})")
+            f"(asked {cam_cfg.width}x{cam_cfg.height} @ {cam_cfg.fps})"
+            + ("  mirrored left-right" if cam_cfg.mirror else "")
+            + (f"  (rows {cam_cfg.pad_y}..{cam_cfg.pad_y + h} of {h + 2 * cam_cfg.pad_y}: TUIO y in "
+               f"{w}x{h + 2 * cam_cfg.pad_y})" if cam_cfg.pad_y else ""))
     src.start()
 
     rec = Recognizer(ids, block=app.block, offset=app.offset, invert=app.invert, equalize=app.equalize,
-                     min_arm=app.min_anchor_px, max_arm=app.max_anchor_px)
+                     min_arm=app.min_anchor_px, max_arm=app.max_anchor_px,
+                     face_check=cam_cfg.face_check, valley=cam_cfg.valley,
+                     edge_band=cam_cfg.edge_band)
+    rec.dash_outer_edge = cam_cfg.dash_outer_edge
+    log(f"  lines   valley, {app.offset:g}% darker than the filled-in brightness" if cam_cfg.valley
+        else f"  lines   local mean - {app.offset:g}, face check {'on' if cam_cfg.face_check else 'off'}")
+    if cam_cfg.edge_band:
+        log(f"  edges   {cam_cfg.edge_band}px band at {rec.edge_scale:.0%} threshold, "
+            f"border tiles' dashes out to {cam_cfg.dash_outer_edge:g} rc")
     # size range from the exhibit server's contact measurement (ritualvision.xml)
     srv_range = app.size_range()
     size_status = (f"size {app.size_ref:.1f}px -{app.size_lo:g}%/+{app.size_hi:g}%"

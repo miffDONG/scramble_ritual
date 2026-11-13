@@ -61,11 +61,28 @@ Ritualvision.exe --driver ocam       oCam SDK로 열기 (auto | opencv | ocam)
 Ritualvision.exe --port 3334         TUIO 포트 변경
 Ritualvision.exe --source 사진.png   카메라 대신 이미지/영상 파일
 Ritualvision.exe --source 사진.png --once   한 장 인식 결과를 JSON으로 출력하고 종료
+Ritualvision.exe --profile none      내장 전시 프로필 끄기 (camera.xml만 사용)
 ```
+
+## 내장 전시 프로필 (기본값)
+
+전시 IR 환경에 맞춘 값이 **프로그램 안에** 들어 있습니다(`ritualvision/profile.py`). 그래서 exe를 어느 폴더에 두든, 옆의 camera.xml이 전시 서버가 쓴 것이든 reacTIVision 것이든 같은 값으로 돌아갑니다. 시작 로그의 `profile exhibit (over camera.xml: …)`에 덮어쓴 값이 나옵니다.
+
+| 항목 | 값 | 이유 |
+|---|---|---|
+| 크기 / fps | 1280x720 @ 60 (MJPG) | 이 카메라는 1280x800에서 60을 요청해도 120fps 모드가 열려 노출이 약 1/128초로 막히고 어둡습니다. 1280x720에는 진짜 60fps 모드가 있습니다(약 1.9배 밝음). 720은 800 센서의 가운데를 자른 것이라, 위아래 40px를 좌표에 더해 TUIO와 `<frame>`은 계속 1280x800 기준입니다 |
+| exposure / gain / brightness / contrast / gamma / sharpness | -5 / 15 / 0 / 32 / 100 / 3 | 매 시작마다 씁니다. 드라이버는 마지막 프로그램이 남긴 값을 유지하므로 `default`로 두면 이전에 무엇을 실행했는지에 따라 밝기가 달라집니다 |
+| mirror | 켬 | 이 카메라는 영상을 좌우 반전해서 보냅니다 |
+| 선 판정 | valley, 면 조건 끔 | 밝은 타일·어두운 배경(IR) 기준. `ritualvision.xml`의 offset은 %로 읽습니다(12~14 권장) |
+| 화면 좌우 가장자리 | 40px 띠는 기준 75%, 가장자리 타일은 대시를 1.0 rc까지 | 렌즈 가장자리에서 타일이 눌리고 선이 흐려집니다(FIXLOG 13) |
+
+camera.xml에서는 카메라 번호와 `<frame>`(ROI, 1280x800 기준)만 쓰입니다. 자세한 근거는 FIXLOG 8~13번.
 
 ## 설정 파일 (exe 옆)
 
 - `camera.xml`: reacTIVision과 같은 형식. `<camera id driver>`(driver는 Ritualvision 전용), `<capture width height fps compress>`, `<settings brightness gain exposure focus …>`, `<frame …>`(ROI).
+  - 아래 `mirror` / `face_check` / `valley`와 `<settings>`의 카메라 값은 `--profile none`일 때만 쓰입니다(기본은 내장 프로필).
+  - `<settings mirror="true">`(Ritualvision 전용): 영상을 좌우로 뒤집은 뒤 인식합니다(ROI를 자른 다음). 타일은 선을 다리 삼아 유리 위에 서므로, 테이블 아래 카메라는 타일의 **진짜 밑면**을 봐야 합니다. 영상을 스스로 좌우 반전하는 웹캠이면 모든 코드가 거꾸로 읽혀(D_001 = id 21이 `1232`로) 빨간색이 뜨므로 이 값을 켭니다. `<settings>` 안에 둔 이유는 전시 서버가 camera.xml을 다시 쓸 때도 `<settings>` 속성은 그대로 두기 때문입니다.
 - `reacTIVision.xml`: `<tuio host port>`, `<image display>`. 전시 서버가 웹 UI 설정으로 다시 씁니다.
 - `ritualvision.xml`: Ritualvision 전용 `<recognizer block offset invert hold ids>`. reacTIVision.xml 다음에 읽으므로 서버가 덮어써도 유지됩니다.
 - `ids.json`: ID ↔ 대시 조합 표 (UR, R, LR, LL). 25개 마커와 같은 순서.

@@ -37,6 +37,26 @@ class CameraConfig:
     frame_height: str = "max"
     xoff: int = 0
     yoff: int = 0
+    # <settings mirror="true">: flip the image left-right before recognition. The tiles stand
+    # on their lines, so a camera under the table must see the true bottom view; a webcam
+    # that mirrors its image reads every code reversed (D_001 = id 21 read as 1232).
+    # In <settings> because the exhibit server keeps those attributes when it rewrites camera.xml.
+    mirror: bool = False
+    # <settings face_check="false">: drop the recognizer's "darker than the tile face" test
+    # (Recognizer.face_check). Needed under IR light, where the background is as dark as the
+    # lines. Kept in <settings> for the same reason as mirror.
+    face_check: bool = True
+    # <settings valley="true">: line = thin dark stripe between brighter pixels, with <recognizer
+    # offset> read as a percentage of the local brightness (Recognizer.valley). For IR light.
+    valley: bool = False
+    # rows the camera itself leaves off at the top (and as many at the bottom) of the size it
+    # captures, against the frame camera.xml and TUIO are measured in. The exhibit profile reads
+    # 1280x720, which this camera takes from the middle of its 1280x800 sensor: pad_y = 40.
+    pad_y: int = 0
+    # recognizer at the image's left / right border (lens edge, FIXLOG 13): px of the band with
+    # a lower line threshold, and how far out a border tile's dashes are searched (x rc)
+    edge_band: int = 0
+    dash_outer_edge: float = 0.95
 
 
 @dataclass
@@ -99,6 +119,9 @@ def load_camera(path):
     st = cam.find("settings")
     if st is not None:
         cfg.settings = dict(st.attrib)
+        cfg.mirror = _bool(cfg.settings.pop("mirror", None), cfg.mirror)
+        cfg.face_check = _bool(cfg.settings.pop("face_check", None), cfg.face_check)
+        cfg.valley = _bool(cfg.settings.pop("valley", None), cfg.valley)
     fr = cam.find("frame")
     if fr is not None:
         cfg.frame_width = fr.get("width", "max")

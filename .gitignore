@@ -36,3 +36,5 @@ Ritualvision/ritualvision_state.json
 Ritualvision/*.orig
 # local preview-server config for this checkout
 /.claude/
+Ritualvision\markers
+Ritualvision_poly

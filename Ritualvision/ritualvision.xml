@@ -6,5 +6,5 @@
      dropped while size_on is true. -->
 <ritualvision>
     <recognizer block="15" offset="12" invert="false" hold="3" ids="ids.json"
-                size_ref="0.00" size_lo="10" size_hi="10" size_on="false" />
+                size_ref="63.20" size_lo="10" size_hi="10" size_on="true" />
 </ritualvision>

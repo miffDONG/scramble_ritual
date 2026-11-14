@@ -1,11 +1,12 @@
-# osc_audio_bridge.py  (v2 — Arduino Mega 2560 · 전자석 5채널)
+# osc_audio_bridge.py  (v3 — Arduino Mega 2560 · 전자석 25채널, 펌웨어 coil25_mega)
 #
-# SuperCollider '/audio' [id, amp, tension]  ->  Mega "M,v1,v2,v3,v4,v5\n"
+# SuperCollider '/audio' [id, amp, tension]  ->  Mega "H" + 16진수 2글자 x 25 + "\n"
 #
-#   [임시 3채널 운영] SC 사운드 ID 0~24 를 가운데 코일 3개에 분배
-#     CH2 = ID  0~8   (D23)      CH3 = ID  9~16  (D24)      CH4 = ID 17~24 (D25)
-#     CH1(D22)·CH5(D26)은 항상 0 (펌웨어에서도 차단)
-#   5채널로 되돌릴 때: 아래 GROUPS를 주석의 5채널 배열로 교체 + 펌웨어 CH_ENABLE_MASK = 0b11111
+#   SC 사운드 ID 하나 = 코일 하나 (1:1)
+#     ID 0 -> CH1 (D22)  ...  ID 24 -> CH25 (D46)
+#     보드1 = ID 0~4 (D22~26)   보드2 = ID 5~9 (D27~31)   보드3 = ID 10~14 (D32~36)
+#     보드4 = ID 15~19 (D37~41) 보드5 = ID 20~24 (D42~46)
+#   이전 3채널 버전은 _backup_3ch/ 폴더에 보관 (펌웨어는 coil5_mega)
 #
 #   1) 앰플리튜드 -> 코일 세기 (주된 구동원)
 #   2) tension -> 혼돈량(chaos). SC 사운드와 같은 곡선으로 계산
@@ -14,8 +15,8 @@
 #
 # 실행
 #   python osc_audio_bridge.py              본 운영
-#   python osc_audio_bridge.py --test       CH1~CH5 차례로 1초씩 켜서 배선 확인
-#   python osc_audio_bridge.py --sweep 1    CH1을 0->255로 천천히 올려 움직이기 시작하는 값 찾기
+#   python osc_audio_bridge.py --test       CH1~CH25 차례로 0.6초씩 + 보드별 5개 동시 ON으로 배선 확인
+#   python osc_audio_bridge.py --sweep 1    CH1을 0->255로 천천히 올려 움직이기 시작하는 값 찾기 (1~25)
 #   python osc_audio_bridge.py --off        전 채널 OFF
 #   python osc_audio_bridge.py --dry        아두이노 없이 계산값만 화면에 출력
 #   --port COM5 처럼 포트 직접 지정 가능
@@ -38,17 +39,8 @@ ADDRESS   = '/audio'
 ID_TIMEOUT = 0.30         # 이 시간 동안 안 들어온 ID는 소리 0으로 취급 (SC 퇴장 timeout과 동일)
 
 # ============================ 채널 묶음 ============================
-GROUPS = [
-    range(0, 0),     # CH1 -> D22  (사용 안 함)
-    range(0, 9),     # CH2 -> D23  ID 0~8   (9개)
-    range(9, 17),    # CH3 -> D24  ID 9~16  (8개)
-    range(17, 25),   # CH4 -> D25  ID 17~24 (8개)
-    range(0, 0),     # CH5 -> D26  (사용 안 함)
-]
-# 5채널 원래 배열:
-# GROUPS = [range(0, 5), range(5, 10), range(10, 15), range(15, 20), range(20, 25)]
-GROUP_MODE = 'sum'   # 'sum' : 묶음 안 소리를 합침 (여러 개 올라갈수록 세짐, 기본)
-                     # 'max' : 묶음 안 가장 큰 소리만 따름 (개별 소리 윤곽이 더 또렷)
+GROUPS = [range(i, i + 1) for i in range(25)]   # CH(n) = ID(n-1), 1:1
+GROUP_MODE = 'sum'   # 1:1이라 의미 없음 (여러 ID를 한 코일에 묶을 때만 사용)
 
 # ===================== 앰플리튜드 시각 극대화 (핵심 조절부) =====================
 GAIN        = 1.0    # [1] 입력 증폭. AUTO_NORM을 끄면 이게 주 조절값 (2~4)
@@ -56,7 +48,7 @@ AUTO_NORM   = True   # [2] 최근 최대값으로 나눠 0~1을 꽉 채움 (작�
 PEAK_FALL_S = 6.0    #     최근 최대값이 잊혀지는 시간(초). 짧을수록 조용한 구간도 크게 반응
 PEAK_FLOOR  = 0.15   #     기준 최대값의 하한. 이보다 작은 소리는 끝까지 부풀리지 않음 (잡음·잔향 방지)
 GLOBAL_LINK = 0.5    #     다른 채널 최대값도 이 비율만큼 기준에 반영. 0 = 채널별 완전 독립(조용한
-                     #     채널도 풀 출력까지 올라감), 1 = 다섯 채널이 같은 기준(실제 음량차 그대로)
+                     #     채널도 풀 출력까지 올라감), 1 = 25채널이 같은 기준(실제 음량차 그대로)
 GATE        = 0.06   # [3] 정규화 후 이 아래는 0 (잔향·잡음 컷)
 EXPAND      = 1.8    # [4] 대비 곡선. 1 = 그대로, 1보다 크면 큰 소리와 작은 소리 차이가 벌어짐 (1.5~2.6)
 ATTACK_S    = 0.015  # [5] 커질 때 따라가는 시간(초). 짧을수록 타격음이 날카롭게 솟음
@@ -78,12 +70,18 @@ WOBBLE_HZ_MAX  = 12.0  # 최대 혼돈 시 흔들림 속도(Hz). 페로플루이
 WOBBLE_DEPTH   = 0.65  # 최대 혼돈 시 흔들림 폭 (출력 범위 대비, 0~1)
 WOBBLE_SHARP   = 2.5   # 파형 모서리. 0에 가까우면 부드러운 사인, 클수록 ON/OFF에 가까운 각진 파형
 WOBBLE_RANDOM  = 0.45  # 반주기마다 폭을 무작위로 (0 = 규칙적, 1 = 불규칙)
-FREQ_JITTER    = 0.30  # 반주기마다 속도를 ±15% 흔듦 (5채널이 서로 맞물리지 않게)
+FREQ_JITTER    = 0.30  # 반주기마다 속도를 ±15% 흔듦 (채널끼리 서로 맞물리지 않게)
 
 # ============================ 열 보호 (기본 꺼짐) ============================
 THERMAL_GUARD = False  # True: 최근 평균 출력이 THERMAL_LIMIT를 넘으면 자동으로 낮춤
 THERMAL_TAU_S = 120.0  # 평균을 내는 시간(초)
 THERMAL_LIMIT = 0.60   # 허용 평균 출력 (1.0 = 상시 풀 출력)
+
+# ============================ 전체 전력 상한 ============================
+# 25개 코일이 동시에 풀 출력이면 SMPS가 못 버틸 수 있음. 매 순간 25채널 출력 합을 이 비율 이하로 제한.
+#   1.0 = 제한 없음.  계산법: (SMPS 정격 A x 0.8) / (코일 1개 전류 A x 25)
+#   예) 24V 20A SMPS, 코일 1개 2A  ->  20 x 0.8 / (2 x 25) = 0.32
+POWER_BUDGET = 1.0
 
 # ============================ 기타 ============================
 SEND_HZ   = 60         # 아두이노로 보내는 횟수/초 (흔들림 12Hz를 표현하려면 40 이상)
@@ -91,7 +89,7 @@ PRINT_HZ  = 10
 DEBUG_RAW = False      # True면 들어오는 OSC 원본을 1.5초마다 출력
 # =====================================================================
 
-NCH = len(GROUPS)                                   # 펌웨어 프로토콜은 5칸 고정
+NCH = len(GROUPS)                                   # 25 (펌웨어 프로토콜 고정)
 ID_TO_CH = {i: ch for ch, g in enumerate(GROUPS) for i in g}
 ACTIVE = [ch for ch, g in enumerate(GROUPS) if len(g) > 0]
 
@@ -296,7 +294,7 @@ class Link:
         if self.dry or self.ser is None:
             return
         try:
-            self.ser.write(("M," + ",".join(str(v) for v in levels) + "\n").encode())
+            self.ser.write(frame(levels))
         except Exception as e:
             print(f"\n[SERIAL] 송신 실패, 재연결 시도: {e}")
             try:
@@ -309,13 +307,26 @@ class Link:
         if self.ser is not None:
             try:
                 self.ser.write(b"X\n")
-                self.ser.write(("M," + ",".join(["0"] * NCH) + "\n").encode())
+                self.ser.write(frame([0] * NCH))
                 self.ser.flush()
                 time.sleep(0.05)
                 self.ser.close()
             except Exception:
                 pass
             self.ser = None
+
+
+def frame(levels):
+    return ("H" + "".join(f"{max(0, min(255, int(v))):02X}" for v in levels) + "\n").encode()
+
+
+SHADE = " .:-=+*#%@"
+
+
+def board_view(levels):
+    """25채널을 보드별 5글자로: 공백=0 ... @=255"""
+    ch = [SHADE[min(9, (v * 10) // 256)] if v > 0 else '_' for v in levels]
+    return " ".join(f"B{b + 1}[{''.join(ch[b * 5:b * 5 + 5])}]" for b in range(NCH // 5))
 
 
 def bar(v, n=10):
@@ -336,8 +347,7 @@ def run_bridge(link):
     server = osc_server.ThreadingOSCUDPServer((OSC_IP, OSC_PORT), disp)
     threading.Thread(target=server.serve_forever, daemon=True).start()
 
-    amap = "  ".join(f"CH{ch + 1}(D{22 + ch})=ID {GROUPS[ch][0]}~{GROUPS[ch][-1]}" for ch in ACTIVE)
-    print(f"OSC 수신 {OSC_IP}:{OSC_PORT} {ADDRESS}   {amap}   GROUP {GROUP_MODE}")
+    print(f"OSC 수신 {OSC_IP}:{OSC_PORT} {ADDRESS}   ID 0~24 -> CH1~25 (D22~D46, 1:1)   전력상한 {POWER_BUDGET}")
     print(f"GAIN {GAIN}  AUTO_NORM {AUTO_NORM}  LINK {GLOBAL_LINK}  EXPAND {EXPAND}  MIN/MAX {MIN_LEVEL}/{MAX_LEVEL}  "
           f"흔들림 {WOBBLE_HZ_MIN}~{WOBBLE_HZ_MAX}Hz  열보호 {'ON' if THERMAL_GUARD else 'OFF'}   Ctrl+C 종료\n")
 
@@ -376,15 +386,20 @@ def run_bridge(link):
         gpeak = max(c.peak for c in chans)
         levels = [chans[ch].step(xs[ch], gpeak, cha[ch], dt) if ch in ACTIVE else 0
                   for ch in range(NCH)]
+        total = sum(levels) / (255.0 * NCH)
+        if POWER_BUDGET < 1.0 and total > POWER_BUDGET:
+            k = POWER_BUDGET / total
+            levels = [int(v * k) for v in levels]
 
         link.send(levels)
 
         if now - last_print > 1.0 / PRINT_HZ:
             last_print = now
-            s = " ".join(f"CH{ch + 1}:{chans[ch].level:3d}" for ch in ACTIVE)
             heat = max(c.heat for c in chans) * 100
             chaos = max(c.chaos for c in chans)
-            line = f"rx {rx['audio']:6d}  obj {nobj:2d}  | {s} | chaos {chaos:.2f} heat {heat:3.0f}%"
+            pw = sum(levels) / (255.0 * NCH) * 100
+            line = (f"rx {rx['audio']:6d} obj {nobj:2d} | {board_view(levels)} | "
+                    f"전력 {pw:3.0f}% chaos {chaos:.2f} heat {heat:3.0f}%")
             print("\r" + line + "   ", end='', flush=True)
 
         sleep = period - (time.perf_counter() - now_p)
@@ -400,14 +415,18 @@ def hold(link, levels, seconds):
 
 
 def run_test(link, duty):
-    print("배선 확인: " + ", ".join(f"CH{c + 1}" for c in ACTIVE) + f" 차례로 {duty}/255, 1초씩 x2회")
-    for _ in range(2):
-        for ch in ACTIVE:
-            lv = [0] * NCH
-            lv[ch] = duty
-            print(f"  CH{ch + 1} (D{22 + ch}) ON")
-            hold(link, lv, 1.0)
-            hold(link, [0] * NCH, 0.3)
+    print(f"배선 확인: CH1~CH25 차례로 {duty}/255 0.6초씩 -> 보드별 5개 동시 1.5초")
+    for ch in ACTIVE:
+        lv = [0] * NCH
+        lv[ch] = duty
+        print(f"  보드{ch // 5 + 1}  CH{ch + 1:<2d} (D{22 + ch}) ON")
+        hold(link, lv, 0.6)
+        hold(link, [0] * NCH, 0.2)
+    for b in range(NCH // 5):
+        lv = [duty if b * 5 <= c < b * 5 + 5 else 0 for c in range(NCH)]
+        print(f"  보드{b + 1} 5개 동시 ON (D{22 + b * 5}~D{26 + b * 5})")
+        hold(link, lv, 1.5)
+        hold(link, [0] * NCH, 0.5)
     print("완료")
 
 
